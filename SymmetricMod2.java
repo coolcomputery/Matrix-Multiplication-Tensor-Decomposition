@@ -3,7 +3,7 @@ import java.util.*;
 public class SymmetricMod2 {
     private static String trimat2str(int[][] A) {
         StringBuilder s=new StringBuilder("(");
-        for (int[] a:A) s.append(Arrays.toString(a).replace(" ","")+",");
+        for (int[] a:A) s.append(Arrays.toString(a).replace(" ","")).append(",");
         s.deleteCharAt(s.length()-1);
         s.append("),");
         return s.toString();
@@ -12,7 +12,8 @@ public class SymmetricMod2 {
     private static int N, N2, N4, N6;
     private static int[] TARGET;
     private static int MASK;
-    private static int[] $matcode;
+    private static int NPERMS, MAJOR_GROUP_SIZE;
+    private static int[][] permutedMatCodes;
     private static int[] t1nsor(int[] X, int[] Y, int[] Z) {
         //TODO: IMPROVE CACHE MISSES
         int[] T=new int[N6];
@@ -49,13 +50,6 @@ public class SymmetricMod2 {
             for (int i:group) if (v!=T[i]) throw new RuntimeException("Tensor not symmetric enough for compression.");
             out[g]=v;
         }
-        return out;
-    }
-
-    private static int[] $(int[] M, int s) {
-        int[] out=new int[N2];
-        for (int i=0; i<N; i++) for (int j=0; j<N; j++)
-            out[i*N+j]=M[((i+s)%N)*N+((j+s)%N)];
         return out;
     }
 
@@ -107,22 +101,18 @@ public class SymmetricMod2 {
     }
 
     private static int[] tri_group_codes(int xcode, int ycode, int zcode) {
-        int[] transformed_tri_codes=new int[3*N];
-        for (int shift=0, idx=0; shift<N; shift++)
+        int[] transformed_tri_codes=new int[MAJOR_GROUP_SIZE];
+        for (int permi=0, idx=0; permi<NPERMS; permi++)
             for (int[] tri0:new int[][] {{xcode,ycode,zcode},{ycode,zcode,xcode},{zcode,xcode,ycode}}) {
                 int[] tri=new int[3];
-                for (int a=0; a<3; a++) {
-                    int code=tri0[a];
-                    for (int rep=0; rep<shift; rep++) code=$matcode[code];
-                    tri[a]=code;
-                }
+                for (int a=0; a<3; a++) tri[a]=permutedMatCodes[permi][tri0[a]];
                 transformed_tri_codes[idx++]=tri[0]|(tri[1]<<N2)|(tri[2]<<(2*N2));
             }
         Arrays.sort(transformed_tri_codes);
 
-        int[] out=new int[transformed_tri_codes.length];
+        int[] out=new int[MAJOR_GROUP_SIZE];
         int S=0;
-        for (int i=0; i<transformed_tri_codes.length; i++)
+        for (int i = 0; i< MAJOR_GROUP_SIZE; i++)
             if (i==0 || transformed_tri_codes[i]>transformed_tri_codes[i-1])
                 out[S++]=transformed_tri_codes[i];
         return Arrays.copyOf(out,S);
@@ -268,6 +258,7 @@ public class SymmetricMod2 {
     private static List<Integer> minorGroupSizes;
     private static List<Integer> dfs_info;
     private static long TIME_ST, TIME_MARK, dfs_work;
+    //TODO: fix stack overflow error
     private static void generateMinorMap(int[] CT, int i, int rank) {
         long time=System.currentTimeMillis()-TIME_ST;
         if (time>TIME_MARK) {
@@ -276,36 +267,78 @@ public class SymmetricMod2 {
         }
         dfs_work++;
         if (i>=nMinor) return;
-        int nrank=rank+minorGroupSizes.get(i);
-        if (nrank<=MAX_Rminor) {
-            dfs_info.add(i);
-            int[] nCT=sum(CT,minorGroupTensors.get(i));
-            int[] K=sum(CTARGET,nCT); //A-B == A+B mod 2
-            if (minorMap.get(K)==null || minorMap.get(K)[1][0]>nrank) {
-                int[] info_arr=new int[dfs_info.size()];
-                for (int j=0; j<info_arr.length; j++) info_arr[j]=dfs_info.get(j);
-                minorMap.put(K,new int[][] {info_arr,{nrank}});
+        for (int j=i; j<minorGroupTensors.size(); j++) {
+            int nrank=rank+minorGroupSizes.get(j);
+            if (nrank<=MAX_Rminor) {
+                dfs_info.add(j);
+                int[] nCT=sum(CT,minorGroupTensors.get(j));
+                int[] K=sum(CTARGET,nCT); //A-B == A+B mod 2
+                if (minorMap.get(K)==null || minorMap.get(K)[1][0]>nrank) {
+                    int[] info_arr=new int[dfs_info.size()];
+                    for (int k=0; k<info_arr.length; k++) info_arr[k]=dfs_info.get(k);
+                    minorMap.put(K,new int[][] {info_arr,{nrank}});
+                }
+                generateMinorMap(nCT,j,nrank);
+                dfs_info.remove(dfs_info.size()-1);
             }
-            generateMinorMap(nCT,i,nrank);
-            dfs_info.remove(dfs_info.size()-1);
         }
-        generateMinorMap(CT,i+1,rank);
     }
 
     public static void main(String[] args) {
         System.out.println("max heap size="+Runtime.getRuntime().maxMemory());
         System.out.println("current heap usage="+Runtime.getRuntime().totalMemory());
         N=3;
+        int NMAJOR=1, MAXNZ=Integer.MAX_VALUE, MAXDIST=6;
+        String MODE="ALLPERM";
+        System.out.printf("N=%d,NMAJOR=%d,MAXNZ=%d,MAXDIST=%d,MODE=%s%n",N,NMAJOR,MAXNZ,MAXDIST,MODE);
+
         N2=N*N; N4=N2*N2; N6=N4*N2;
         TARGET=new int[N6];
         for (int i=0; i<N; i++) for (int j=0; j<N; j++) for (int k=0; k<N; k++)
             TARGET[(i*N+j)*N4+(j*N+k)*N2+(k*N+i)]=1;
         MASK=(1<<N2)-1;
-        $matcode=new int[1<<N2];
-        for (int b=1; b<(1<<N2); b++) $matcode[b]=mat2bin($(bin2mat(b),1));
 
-        int R=2, MAXNZ=16, MAXDIST=6;
-        System.out.printf("N=%d,R=%d,MAXNZ=%d,MAXDIST=%d%n",N,R,MAXNZ,MAXDIST);
+        {
+            List<int[]> perms;
+            switch (MODE) {
+                case "SHIFT":
+                    perms=new ArrayList<>();
+                    for (int s=0; s<N; s++) {
+                        int[] p=new int[N]; for (int i=0; i<N; i++) p[i]=(i+s)%N;
+                        perms.add(p);
+                    }
+                    break;
+                case "ALLPERM":
+                    perms=new ArrayList<>(Collections.singletonList(new int[] {0}));
+                    for (int n=2; n<=N; n++) {
+                        List<int[]> tmp=new ArrayList<>();
+                        for (int[] p:perms)
+                        for (int i=0; i<n; i++) {
+                            int[] np=new int[n];
+                            System.arraycopy(p,0,np,0,i);
+                            np[i]=n-1;
+                            System.arraycopy(p,i,np,i+1,n-1-i);
+                            tmp.add(np);
+                        }
+                        perms=tmp;
+                    }
+                    break;
+                default:
+                    throw new RuntimeException("Symmetry type not found.");
+            }
+            NPERMS=perms.size();
+            permutedMatCodes=new int[NPERMS][1<<N2];
+            for (int b=1; b<(1<<N2); b++) {
+                int[] mat=bin2mat(b);
+                for (int pi=0; pi<NPERMS; pi++) {
+                    int[] p=perms.get(pi);
+                    int[] nmat=new int[N2];
+                    for (int r=0; r<N; r++) for (int c=0; c<N; c++) nmat[r*N+c]=mat[p[r]*N+p[c]];
+                    permutedMatCodes[pi][b]=mat2bin(nmat);
+                }
+            }
+        }
+        MAJOR_GROUP_SIZE=3*NPERMS;
 
         groupNum=new int[N6]; Arrays.fill(groupNum,-1); G=0; {
             int[] log2=new int[1<<N2]; for (int i=0; i<N2; i++) log2[1<<i]=i;
@@ -330,12 +363,11 @@ public class SymmetricMod2 {
         }
         CTARGET=compress(TARGET);
 
-        int FULL_GROUP_SIZE=9;
-        ArrMap[] minorGroupMaps=new ArrMap[FULL_GROUP_SIZE];
-        for (int sz=1; sz<FULL_GROUP_SIZE; sz++) minorGroupMaps[sz]=new MapArrMap(); {
+        ArrMap[] minorGroupMaps=new ArrMap[MAJOR_GROUP_SIZE];
+        for (int sz = 1; sz< MAJOR_GROUP_SIZE; sz++) minorGroupMaps[sz]=new MapArrMap(); {
             long st=System.currentTimeMillis();
             long work=0;
-            int[] symmGroupSzHist=new int[FULL_GROUP_SIZE];
+            int[] symmGroupSzHist=new int[MAJOR_GROUP_SIZE];
             boolean[] taken=new boolean[1<<(3*N2)];
             for (int xc=1; xc<(1<<N2); xc++) for (int yc=1; yc<(1<<N2); yc++) for (int zc=1; zc<(1<<N2); zc++) {
                 int tri_code=xc|(yc<<N2)|(zc<<(2*N2));
@@ -343,7 +375,7 @@ public class SymmetricMod2 {
                     int[] transformed_tri_codes=tri_group_codes(xc,yc,zc);
                     for (int c:transformed_tri_codes) taken[c]=true;
                     int S=transformed_tri_codes.length;
-                    if (S<FULL_GROUP_SIZE) {
+                    if (S<MAJOR_GROUP_SIZE) {
                         int[] ret=compress(sumdecomp(tricodes2trimats(transformed_tri_codes)));
                         if (minorGroupMaps[S].get(ret)==null) {
                             symmGroupSzHist[S]++;
@@ -356,12 +388,10 @@ public class SymmetricMod2 {
             System.out.printf("%d %d %s%n",work,System.currentTimeMillis()-st,Arrays.toString(symmGroupSzHist));
         }
 
-        //TODO: TRY CYC3+ALLPERM?????!!!!!
-
         System.out.println("generating minor map");
         minorGroupTensors=new ArrayList<>();
         minorGroupSizes=new ArrayList<>();
-        for (int S=1; S<FULL_GROUP_SIZE; S++)
+        for (int S = 1; S< MAJOR_GROUP_SIZE; S++)
             for (int[] K:minorGroupMaps[S].keys()) {
                 minorGroupTensors.add(K);
                 minorGroupSizes.add(S);
@@ -369,7 +399,8 @@ public class SymmetricMod2 {
         nMinor=minorGroupTensors.size();
         System.out.println(nMinor+" total minor groups");
 
-        MAX_Rminor=23-9*R;
+        MAX_Rminor=23-MAJOR_GROUP_SIZE*NMAJOR;
+        if (MAX_Rminor<0) throw new RuntimeException("Too many major groups to fit minor group in decomposition of rank <=23.");
         System.out.println("MAX_Rminor="+MAX_Rminor);
         minorMap=new BinaryTrieArrMap();
         dfs_info=new ArrayList<>();
@@ -378,8 +409,10 @@ public class SymmetricMod2 {
         generateMinorMap(new int[G],0,0);
         System.out.printf("%d %d %d%n",System.currentTimeMillis()-TIME_ST,dfs_work,minorMap.size());
 
+        System.out.println("generating sparse major matrix triplets");
         List<Integer> sparseTrimatCodes=new ArrayList<>();
         List<int[]> sparseTrimatTensors=new ArrayList<>(); {
+            long st=System.currentTimeMillis(), mark=0;
             boolean[] taken=new boolean[1<<(3*N2)];
             int[] bitcnt=new int[1<<N2];
             bitcnt[0]=0;
@@ -387,6 +420,11 @@ public class SymmetricMod2 {
             for (int a=1; a<(1<<N2); a++) if (bitcnt[a]<=MAXNZ)
                 for (int b=1; b<(1<<N2); b++) if (bitcnt[a]*bitcnt[b]<=MAXNZ)
                     for (int c=1; c<(1<<N2); c++) if (bitcnt[a]*bitcnt[b]*bitcnt[c]<=MAXNZ) {
+                        long time=System.currentTimeMillis()-st;
+                        if (time>=mark) {
+                            mark+=10_000;
+                            System.out.printf("%d %d%n",sparseTrimatCodes.size(),time);
+                        }
                         int tricode=a|(b<<N2)|(c<<(2*N2));
                         if (!taken[tricode]) {
                             int[] codes=tri_group_codes(a,b,c);
@@ -395,6 +433,7 @@ public class SymmetricMod2 {
                             sparseTrimatTensors.add(compress(sumdecomp(tricodes2trimats(codes))));
                         }
                     }
+            System.out.printf("%d %d%n",sparseTrimatCodes.size(),System.currentTimeMillis()-st);
             System.out.println(sparseTrimatCodes.size()+" sparse matrix triplets");
             System.out.println("current heap usage="+Runtime.getRuntime().totalMemory());
         }
@@ -404,21 +443,21 @@ public class SymmetricMod2 {
         long st=System.currentTimeMillis(), mark=0;
         int bscr=Integer.MAX_VALUE;
         long work=0; search_work=0;
-        if (R==2) {
-            for (int ia=0; ia<sparseTrimatCodes.size(); ia++)
-                for (int ib=0; ib<=ia; ib++) {
+        switch (NMAJOR) {
+            case 1:
+                for (int ia=0; ia<sparseTrimatCodes.size(); ia++) {
                     long time=System.currentTimeMillis()-st;
                     if (time>=mark) {
-                        mark+=1000_000;
+                        mark+=100_000;
                         System.out.printf("%d %d %d%n",work,search_work,time);
                     }
                     work++;
-                    int[] CT=sum(sparseTrimatTensors.get(ia),sparseTrimatTensors.get(ib));
+                    int[] CT=sparseTrimatTensors.get(ia);
                     int[][] aCT=Searcher.closestWithin(minorMap,CT,MAXDIST);
                     if (aCT[0]!=null) {
                         int scr=aCT[1][0];
                         histogram[scr]++;
-                        if (scr<bscr) {
+                        if (scr<=bscr) {
                             bscr=scr;
                             System.out.println("scr="+scr);
                             System.out.println("minor:");
@@ -427,14 +466,47 @@ public class SymmetricMod2 {
                                         minorGroupMaps[minorGroupSizes.get(i)].get(minorGroupTensors.get(i))[0][0]
                                 )));
                             System.out.println("major:");
-                            for (int code:new int[] {sparseTrimatCodes.get(ia),sparseTrimatCodes.get(ib)})
-                                System.out.println(trimat2str(bin2trimat(code)));
+                            System.out.println(trimat2str(bin2trimat(sparseTrimatCodes.get(ia))));
+
                         }
                     }
                 }
-            System.out.printf("%d %d %d%n",work,search_work,System.currentTimeMillis()-st);
-            System.out.println("histogram="+Arrays.toString(histogram));
+                System.out.printf("%d %d %d%n",work,search_work,System.currentTimeMillis()-st);
+                System.out.println("histogram="+Arrays.toString(histogram));
+                break;
+            case 2:
+                for (int ia=0; ia<sparseTrimatCodes.size(); ia++)
+                    for (int ib=0; ib<=ia; ib++) {
+                        long time=System.currentTimeMillis()-st;
+                        if (time>=mark) {
+                            mark+=100_000;
+                            System.out.printf("%d %d %d%n",work,search_work,time);
+                        }
+                        work++;
+                        int[] CT=sum(sparseTrimatTensors.get(ia),sparseTrimatTensors.get(ib));
+                        int[][] aCT=Searcher.closestWithin(minorMap,CT,MAXDIST);
+                        if (aCT[0]!=null) {
+                            int scr=aCT[1][0];
+                            histogram[scr]++;
+                            if (scr<=bscr) {
+                                bscr=scr;
+                                System.out.println("scr="+scr);
+                                System.out.println("minor:");
+                                for (int i:minorMap.get(aCT[0])[0])
+                                    System.out.println(trimat2str(bin2trimat(
+                                            minorGroupMaps[minorGroupSizes.get(i)].get(minorGroupTensors.get(i))[0][0]
+                                    )));
+                                System.out.println("major:");
+                                for (int code:new int[] {sparseTrimatCodes.get(ia),sparseTrimatCodes.get(ib)})
+                                    System.out.println(trimat2str(bin2trimat(code)));
+                            }
+                        }
+                    }
+                System.out.printf("%d %d %d%n",work,search_work,System.currentTimeMillis()-st);
+                System.out.println("histogram="+Arrays.toString(histogram));
+                break;
+            default:
+                throw new RuntimeException();
         }
-
     }
 }
