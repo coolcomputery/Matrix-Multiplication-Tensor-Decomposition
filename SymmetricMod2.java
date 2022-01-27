@@ -1,18 +1,24 @@
 import java.util.*;
 //same as SymmetricBruteForce.java, but everything is mod 2
 public class SymmetricMod2 {
-    //TODO: BIT TWIDDLING TRICKS
-    private static int mod2(int n) {
-        return (n%2+2)%2;
+    private static String trimat2str(int[][] A) {
+        StringBuilder s=new StringBuilder("(");
+        for (int[] a:A) s.append(Arrays.toString(a).replace(" ","")+",");
+        s.deleteCharAt(s.length()-1);
+        s.append("),");
+        return s.toString();
     }
+
     private static int N, N2, N4, N6;
     private static int[] TARGET;
+    private static int MASK;
+    private static int[] $matcode;
     private static int[] t1nsor(int[] X, int[] Y, int[] Z) {
         //TODO: IMPROVE CACHE MISSES
         int[] T=new int[N6];
-        for (int ab=0; ab<N2; ab++)
-            for (int cd=0; cd<N2; cd++)
-                for (int ef=0; ef<N2; ef++)
+        for (int ab=0; ab<N2; ab++) if (X[ab]!=0)
+            for (int cd=0; cd<N2; cd++) if (Y[cd]!=0)
+                for (int ef=0; ef<N2; ef++) if (Z[ef]!=0)
                     T[ab*N4+cd*N2+ef]=X[ab]*Y[cd]*Z[ef];
         return T;
     }
@@ -22,7 +28,7 @@ public class SymmetricMod2 {
     private static int[] sum(int[] A, int[] B) {
         if (A.length!=B.length) throw new RuntimeException();
         int[] C=new int[A.length];
-        for (int i=0; i<A.length; i++) C[i]=mod2(A[i]+B[i]);
+        for (int i=0; i<A.length; i++) C[i]=(A[i]+B[i])%2;
         return C;
     }
     private static int[] sumdecomp(List<int[][]> tris) {
@@ -30,16 +36,11 @@ public class SymmetricMod2 {
         for (int[][] tri:tris) out=sum(out,t1nsor(tri));
         return out;
     }
-    private static int[] diff(int[] A, int[] B) {
-        if (A.length!=B.length) throw new RuntimeException();
-        int[] C=new int[A.length];
-        for (int i=0; i<A.length; i++) C[i]=mod2(A[i]-B[i]);
-        return C;
-    }
 
     private static int G;
     private static int[][] groups;
     private static int[] groupNum, groupSzs;
+    private static int[] CTARGET;
     private static int[] compress(int[] T) {
         int[] out=new int[G];
         for (int g=0; g<G; g++) {
@@ -51,75 +52,11 @@ public class SymmetricMod2 {
         return out;
     }
 
-    private static int nnonzero(int[] A) {
-        int out=0;
-        for (int v:A) if (v!=0) out++;
-        return out;
-    }
-    private static List<int[]> mats(int z) {
-        List<int[]> out=new ArrayList<>();
-        int[] M=new int[N2];
-        while (M[N2-1]<2) {
-            int n=nnonzero(M); if (n>0&&n<=z) out.add(Arrays.copyOf(M,N2));
-            M[0]++;
-            for (int i=0; i<N2-1&&M[i]>=2; i++) {
-                M[i]=0;
-                M[i+1]++;
-            }
-        }
-        return out;
-    }
     private static int[] $(int[] M, int s) {
         int[] out=new int[N2];
         for (int i=0; i<N; i++) for (int j=0; j<N; j++)
-            out[((i+s)%N)*N+((j+s)%N)]=M[i*N+j];
+            out[i*N+j]=M[((i+s)%N)*N+((j+s)%N)];
         return out;
-    }
-    private static List<int[][]> expandC(List<int[][]> triplets) {
-        List<int[][]> out=new ArrayList<>();
-        for (int[][] tri:triplets) {
-            int[] A=tri[0], B=tri[1], C=tri[2];
-            out.addAll(Arrays.asList(new int[][] {A,B,C},new int[][] {B,C,A},new int[][] {C,A,B}));
-        }
-        return out;
-    }
-    private static List<int[][]> expand$(List<int[][]> triplets) {
-        List<int[][]> out=new ArrayList<>();
-        for (int[][] tri:triplets)
-            for (int s=0; s<N; s++)
-                out.add(new int[][] {$(tri[0],s),$(tri[1],s),$(tri[2],s)});
-        return out;
-    }
-
-    private static List<int[]> combos_with_replacement(int N, int K) {
-        //output a list of all sorted K-length combinations of numbers 0...N-1,
-        //  where duplicates are allowed
-        List<List<List<int[]>>> ls=new ArrayList<>();
-        for (int n=0; n<=N; n++) {
-            ls.add(new ArrayList<>());
-            for (int k=0; k<=K; k++) {
-                List<int[]> ret;
-                if (k==0) ret=new ArrayList<>(Collections.singletonList(new int[0]));
-                else if (n<=0) ret=new ArrayList<>();
-                else {
-                    ret=ls.get(n-1).get(k);
-                    for (int[] c:ls.get(n).get(k-1)) {
-                        int[] nc=Arrays.copyOf(c,k);
-                        nc[k-1]=n-1;
-                        ret.add(nc);
-                    }
-                }
-                ls.get(n).add(ret);
-            }
-        }
-        return ls.get(N).get(K);
-    }
-
-    private static String arr2_str(int[][] A) {
-        StringBuilder s=new StringBuilder("[");
-        for (int[] a:A) s.append(Arrays.toString(a)+" ");
-        s.append("]");
-        return s.toString();
     }
 
     private static class MapArrMap implements ArrMap {
@@ -147,9 +84,56 @@ public class SymmetricMod2 {
             return m.size();
         }
     }
+    private interface ArrMap {
+        //efficient map int[] --> smth
+        void put(int[] A, int[][] v);
+        int[][] get(int[] A);
+        List<int[]> keys();
+        int size();
+    }
+    private static int mat2bin(int[] M) {
+        int b=0;
+        for (int i=0; i<N2; i++) b|=M[i]<<i;
+        return b;
+    }
+    private static int[] bin2mat(int b) {
+        int[] M=new int[N2];
+        for (int i=0; i<N2; i++) M[i]=(b>>i)&1;
+        return M;
+    }
+    private static int[][] bin2trimat(int c) {
+        int xc=c&MASK, yc=(c>>N2)&MASK, zc=(c>>(2*N2))&MASK;
+        return new int[][] {bin2mat(xc),bin2mat(yc),bin2mat(zc)};
+    }
+
+    private static int[] tri_group_codes(int xcode, int ycode, int zcode) {
+        int[] transformed_tri_codes=new int[3*N];
+        for (int shift=0, idx=0; shift<N; shift++)
+            for (int[] tri0:new int[][] {{xcode,ycode,zcode},{ycode,zcode,xcode},{zcode,xcode,ycode}}) {
+                int[] tri=new int[3];
+                for (int a=0; a<3; a++) {
+                    int code=tri0[a];
+                    for (int rep=0; rep<shift; rep++) code=$matcode[code];
+                    tri[a]=code;
+                }
+                transformed_tri_codes[idx++]=tri[0]|(tri[1]<<N2)|(tri[2]<<(2*N2));
+            }
+        Arrays.sort(transformed_tri_codes);
+
+        int[] out=new int[transformed_tri_codes.length];
+        int S=0;
+        for (int i=0; i<transformed_tri_codes.length; i++)
+            if (i==0 || transformed_tri_codes[i]>transformed_tri_codes[i-1])
+                out[S++]=transformed_tri_codes[i];
+        return Arrays.copyOf(out,S);
+    }
+    private static List<int[][]> tricodes2trimats(int[] codes) {
+        List<int[][]> out=new ArrayList<>();
+        for (int c:codes) out.add(bin2trimat(c));
+        return out;
+    }
+
     private static class BinaryTrieArrMap implements ArrMap {
-        //TODO: RADIX TREE TO REDUCE MEMORY?
-        //          (what about searching for all arr.s within kixed dist. of specific arr.?????
         int[][][] val;
         int[] depth;
         int[][] cidxs;
@@ -232,13 +216,6 @@ public class SymmetricMod2 {
             return treesz;
         }
     }
-    private interface ArrMap {
-        //efficient map int[] --> smth
-        void put(int[] A, int[][] v);
-        int[][] get(int[] A);
-        List<int[]> keys();
-        int size();
-    }
     private static long search_work;
     private static class Searcher {
         //search through all of map's keys that are of distance <=D from CT
@@ -256,19 +233,19 @@ public class SymmetricMod2 {
                 }
                 return;
             }
-            int match_b=CT[d];
-            int mc=map.cidxs[i][match_b];
-            if (mc>-1) {
-                stack[d]=match_b;
-                search_help(mc,d+1,dist);
+            int c0=map.cidxs[i][0], c1=map.cidxs[i][1];
+            if (c1>-1) {
+                int d1=dist+(CT[d]==1?0:groupSzs[d]);
+                if (d1<=D) {
+                    stack[d]=1;
+                    search_help(c1,d+1,d1);
+                }
             }
-            int ndist=dist+groupSzs[d];
-            if (ndist<=D) {
-                int b=1-match_b;
-                int oc=map.cidxs[i][b];
-                if (oc>-1) {
-                    stack[d]=b;
-                    search_help(oc,d+1,ndist);
+            if (c0>-1) {
+                int d0=dist+(CT[d]==0?0:groupSzs[d]);
+                if (d0<=D) {
+                    stack[d]=0;
+                    search_help(c0,d+1,d0);
                 }
             }
         }
@@ -284,6 +261,37 @@ public class SymmetricMod2 {
         }
     }
 
+    private static int MAX_Rminor;
+    private static BinaryTrieArrMap minorMap;
+    private static int nMinor;
+    private static List<int[]> minorGroupTensors;
+    private static List<Integer> minorGroupSizes;
+    private static List<Integer> dfs_info;
+    private static long TIME_ST, TIME_MARK, dfs_work;
+    private static void generateMinorMap(int[] CT, int i, int rank) {
+        long time=System.currentTimeMillis()-TIME_ST;
+        if (time>TIME_MARK) {
+            TIME_MARK+=1000;
+            System.out.printf("%d %d %d%n",time,dfs_work,minorMap.size());
+        }
+        dfs_work++;
+        if (i>=nMinor) return;
+        int nrank=rank+minorGroupSizes.get(i);
+        if (nrank<=MAX_Rminor) {
+            dfs_info.add(i);
+            int[] nCT=sum(CT,minorGroupTensors.get(i));
+            int[] K=sum(CTARGET,nCT); //A-B == A+B mod 2
+            if (minorMap.get(K)==null || minorMap.get(K)[1][0]>nrank) {
+                int[] info_arr=new int[dfs_info.size()];
+                for (int j=0; j<info_arr.length; j++) info_arr[j]=dfs_info.get(j);
+                minorMap.put(K,new int[][] {info_arr,{nrank}});
+            }
+            generateMinorMap(nCT,i,nrank);
+            dfs_info.remove(dfs_info.size()-1);
+        }
+        generateMinorMap(CT,i+1,rank);
+    }
+
     public static void main(String[] args) {
         System.out.println("max heap size="+Runtime.getRuntime().maxMemory());
         System.out.println("current heap usage="+Runtime.getRuntime().totalMemory());
@@ -292,21 +300,20 @@ public class SymmetricMod2 {
         TARGET=new int[N6];
         for (int i=0; i<N; i++) for (int j=0; j<N; j++) for (int k=0; k<N; k++)
             TARGET[(i*N+j)*N4+(j*N+k)*N2+(k*N+i)]=1;
-        int R=2, Z=16, D=6;
-        System.out.printf("N=%d,R=%d,Z=%d,D=%d%n",N,R,Z,D);
+        MASK=(1<<N2)-1;
+        $matcode=new int[1<<N2];
+        for (int b=1; b<(1<<N2); b++) $matcode[b]=mat2bin($(bin2mat(b),1));
 
-        groupNum=new int[N6]; Arrays.fill(groupNum,-1);
-        G=0;
-        for (int i=0; i<N2; i++) for (int j=0; j<N2; j++) for (int k=0; k<N2; k++) if (groupNum[i*N4+j*N2+k]==-1) {
-            for (int rot=0; rot<3; rot++) {
-                int[] coords=rot==0?new int[] {i,j,k}:rot==1?new int[] {j,k,i}:new int[] {k,i,j};
-                for (int shift=0; shift<N; shift++) {
-                    int[] scoords=new int[3];
-                    for (int a=0; a<3; a++) scoords[a]=((coords[a]/N+shift)%N)*N+(coords[a]%N+shift)%N;
-                    groupNum[scoords[0]*N4+scoords[1]*N2+scoords[2]]=G;
-                }
+        int R=2, MAXNZ=16, MAXDIST=6;
+        System.out.printf("N=%d,R=%d,MAXNZ=%d,MAXDIST=%d%n",N,R,MAXNZ,MAXDIST);
+
+        groupNum=new int[N6]; Arrays.fill(groupNum,-1); G=0; {
+            int[] log2=new int[1<<N2]; for (int i=0; i<N2; i++) log2[1<<i]=i;
+            for (int i=0; i<N2; i++) for (int j=0; j<N2; j++) for (int k=0; k<N2; k++) if (groupNum[i*N4+j*N2+k]==-1) {
+                for (int tric:tri_group_codes(1<<i,1<<j,1<<k))
+                    groupNum[log2[tric&MASK]*N4+log2[(tric>>N2)&MASK]*N2+log2[(tric>>(2*N2))&MASK]]=G;
+                G++;
             }
-            G++;
         }
         groupSzs=new int[G];
         for (int i=0; i<N6; i++) groupSzs[groupNum[i]]++;
@@ -321,124 +328,113 @@ public class SymmetricMod2 {
             for (int sz:groupSzs) tot+=sz;
             if (tot!=N6) throw new RuntimeException();
         }
-        int[] CTARGET=compress(TARGET);
+        CTARGET=compress(TARGET);
 
-        List<int[]> MATS=mats(N*N), $MATS=new ArrayList<>();
-        for (int[] M:mats(N*N)) if (Arrays.equals(M,$(M,1))) $MATS.add(M);
-        System.out.println(MATS.size()+" MATS, "+$MATS.size()+" $MATS");
-
-        System.out.println("making partially symmetric tensor groups");
-        ArrMap mapAll=new MapArrMap(), mapC=new MapArrMap(), map$=new MapArrMap(), map$C=new MapArrMap(), map$CC=new MapArrMap();
-        for (int[] $:$MATS) mapAll.put(compress(sumdecomp(Collections.singletonList(new int[][] {$,$,$}))),new int[][] {$});
-        for (int[] M:MATS) mapC.put(compress(sumdecomp(expand$(Collections.singletonList(new int[][] {M,M,M})))),new int[][] {M});
-        for (int[] $0:$MATS) for (int[] $1:$MATS) for (int[] $2:$MATS)
-            map$.put(compress(sumdecomp(expandC(Collections.singletonList(new int[][] {$0,$1,$2})))),new int[][] {$0,$1,$2});
-        for (int[] M:MATS) map$C.put(compress(sumdecomp(expandC(Collections.singletonList(new int[][] {$(M,2),$(M,1),M})))),new int[][] {M});
-        for (int[] M:MATS) map$CC.put(compress(sumdecomp(expandC(Collections.singletonList(new int[][] {M,$(M,1),$(M,2)})))),new int[][] {M});
-        System.out.printf("%d All, %d C, %d $, %d $C, %d $CC%n",mapAll.size(),mapC.size(),map$.size(),map$C.size(),map$CC.size());
-
-        System.out.println("making mapMinor");
-        List<int[]> kAll=mapAll.keys(), kC=mapC.keys(), k$=map$.keys(), k$C=map$C.keys(), k$CC=map$CC.keys();
-        int Rminor=23-9*R;
-        BinaryTrieArrMap mapMinor=new BinaryTrieArrMap(); {
-            long st=System.currentTimeMillis(), mark=0;
+        int FULL_GROUP_SIZE=9;
+        ArrMap[] minorGroupMaps=new ArrMap[FULL_GROUP_SIZE];
+        for (int sz=1; sz<FULL_GROUP_SIZE; sz++) minorGroupMaps[sz]=new MapArrMap(); {
+            long st=System.currentTimeMillis();
             long work=0;
-            for (int sAll=0; sAll<=Rminor; sAll++)
-                for (int sC=0; 3*sC<=Rminor; sC++)
-                    for (int s$=0; 3*s$<=Rminor; s$++)
-                        for (int s$C=0; 3*s$C<=Rminor; s$C++)
-                            for (int s$CC=0; 3*s$CC<=Rminor; s$CC++) if (sAll+3*(sC+s$+s$C+s$CC)<=Rminor) {
-                                System.out.printf("%d %d %d %d %d%n",sAll,sC,s$,s$C,s$CC);
-                                List<int[]> lcAll=combos_with_replacement(mapAll.size(),sAll),
-                                        lcC=combos_with_replacement(mapC.size(),sC),
-                                        lc$=combos_with_replacement(map$.size(),s$),
-                                        lc$C=combos_with_replacement(map$C.size(),s$C),
-                                        lc$CC=combos_with_replacement(map$CC.size(),s$CC);
-                                for (int[] cAll:lcAll) for (int[] cC:lcC) for (int[] c$:lc$) for (int[] c$C:lc$C) for (int[] c$CC:lc$CC) {
-                                    work++;
-                                    int[] T=new int[G];
-                                    for (int i:cAll) T=sum(T,kAll.get(i));
-                                    for (int i:cC) T=sum(T,kC.get(i));
-                                    for (int i:c$) T=sum(T,k$.get(i));
-                                    for (int i:c$C) T=sum(T,k$C.get(i));
-                                    for (int i:c$CC) T=sum(T,k$CC.get(i));
-                                    T=diff(CTARGET,T);
-                                    int[][] info=mapMinor.get(T);
-                                    if (info==null || sAll+3*(sC+s$+s$C+s$CC)<info[0].length+3*(info[1].length+info[2].length+info[3].length+info[4].length))
-                                        mapMinor.put(T,new int[][] {cAll,cC,c$,c$C,c$CC});
-                                    long time=System.currentTimeMillis()-st;
-                                    if (time>=mark) {
-                                        mark+=5000;
-                                        System.out.printf("%d %d %d%n",work,mapMinor.size(),time);
-                                    }
-                                }
-                                //work+=(long)lcAll.size()*lcC.size()*lc$.size()*lc$C.size()*lc$CC.size();
-                                System.out.printf("%d %d %d%n",work,mapMinor.size(),System.currentTimeMillis()-st);
-                            }
-            System.out.printf("%d %d %d%n",work,mapMinor.size(),System.currentTimeMillis()-st);
+            int[] symmGroupSzHist=new int[FULL_GROUP_SIZE];
+            boolean[] taken=new boolean[1<<(3*N2)];
+            for (int xc=1; xc<(1<<N2); xc++) for (int yc=1; yc<(1<<N2); yc++) for (int zc=1; zc<(1<<N2); zc++) {
+                int tri_code=xc|(yc<<N2)|(zc<<(2*N2));
+                if (!taken[tri_code]) {
+                    int[] transformed_tri_codes=tri_group_codes(xc,yc,zc);
+                    for (int c:transformed_tri_codes) taken[c]=true;
+                    int S=transformed_tri_codes.length;
+                    if (S<FULL_GROUP_SIZE) {
+                        int[] ret=compress(sumdecomp(tricodes2trimats(transformed_tri_codes)));
+                        if (minorGroupMaps[S].get(ret)==null) {
+                            symmGroupSzHist[S]++;
+                            minorGroupMaps[S].put(ret,new int[][] {{tri_code}});
+                        }
+                    }
+                    work++;
+                }
+            }
+            System.out.printf("%d %d %s%n",work,System.currentTimeMillis()-st,Arrays.toString(symmGroupSzHist));
         }
 
-        System.out.println("making mapMajor");
-        ArrMap mapMajor=new MapArrMap(); {
-            long st=System.currentTimeMillis(), mark=0;
-            long work=0;
-            for (int[] A:MATS) {
-                int nzA=nnonzero(A);
-                if (nzA<=Z)
-                    for (int[] B:MATS) {
-                        int nzB=nnonzero(B);
-                        if (nzA*nzB<=Z)
-                            for (int [] C:MATS) if (nzA*nzB*nnonzero(C)<=Z) {
-                                mapMajor.put(compress(sumdecomp(expand$(expandC(Collections.singletonList(new int[][] {A,B,C}))))),new int[][] {A,B,C});
-                                work++;
-                                long time=System.currentTimeMillis()-st;
-                                if (time>=mark) {
-                                    mark+=5000;
-                                    System.out.printf("%d %d %d%n",work,mapMajor.size(),time);
-                                }
-                            }
-                    }
+        //TODO: TRY CYC3+ALLPERM?????!!!!!
+
+        System.out.println("generating minor map");
+        minorGroupTensors=new ArrayList<>();
+        minorGroupSizes=new ArrayList<>();
+        for (int S=1; S<FULL_GROUP_SIZE; S++)
+            for (int[] K:minorGroupMaps[S].keys()) {
+                minorGroupTensors.add(K);
+                minorGroupSizes.add(S);
             }
-            System.out.printf("%d %d %d%n",work,mapMajor.size(),System.currentTimeMillis()-st);
+        nMinor=minorGroupTensors.size();
+        System.out.println(nMinor+" total minor groups");
+
+        MAX_Rminor=23-9*R;
+        System.out.println("MAX_Rminor="+MAX_Rminor);
+        minorMap=new BinaryTrieArrMap();
+        dfs_info=new ArrayList<>();
+        TIME_ST=System.currentTimeMillis(); TIME_MARK=0;
+        dfs_work=0;
+        generateMinorMap(new int[G],0,0);
+        System.out.printf("%d %d %d%n",System.currentTimeMillis()-TIME_ST,dfs_work,minorMap.size());
+
+        List<Integer> sparseTrimatCodes=new ArrayList<>();
+        List<int[]> sparseTrimatTensors=new ArrayList<>(); {
+            boolean[] taken=new boolean[1<<(3*N2)];
+            int[] bitcnt=new int[1<<N2];
+            bitcnt[0]=0;
+            for (int i=1; i<(1<<N2); i++) bitcnt[i]=bitcnt[i/2]+i%2;
+            for (int a=1; a<(1<<N2); a++) if (bitcnt[a]<=MAXNZ)
+                for (int b=1; b<(1<<N2); b++) if (bitcnt[a]*bitcnt[b]<=MAXNZ)
+                    for (int c=1; c<(1<<N2); c++) if (bitcnt[a]*bitcnt[b]*bitcnt[c]<=MAXNZ) {
+                        int tricode=a|(b<<N2)|(c<<(2*N2));
+                        if (!taken[tricode]) {
+                            int[] codes=tri_group_codes(a,b,c);
+                            for (int code:codes) taken[code]=true;
+                            sparseTrimatCodes.add(tricode);
+                            sparseTrimatTensors.add(compress(sumdecomp(tricodes2trimats(codes))));
+                        }
+                    }
+            System.out.println(sparseTrimatCodes.size()+" sparse matrix triplets");
+            System.out.println("current heap usage="+Runtime.getRuntime().totalMemory());
         }
 
         System.out.println("searching");
+        long[] histogram=new long[MAXDIST+1];
         long st=System.currentTimeMillis(), mark=0;
         int bscr=Integer.MAX_VALUE;
-        long work=0;
-        search_work=0;
+        long work=0; search_work=0;
         if (R==2) {
-            long[] histogram=new long[D+1];
-            List<int[]> kMajor=mapMajor.keys();
-            for (int majAi=0; majAi<kMajor.size(); majAi++)
-                for (int majBi=majAi; majBi<kMajor.size(); majBi++) {
-                    int[] majA=kMajor.get(majAi), majB=kMajor.get(majBi);
-                    int[] CT=sum(majA,majB);
-                    int[][] aCT=Searcher.closestWithin(mapMinor,CT,D);
+            for (int ia=0; ia<sparseTrimatCodes.size(); ia++)
+                for (int ib=0; ib<=ia; ib++) {
+                    long time=System.currentTimeMillis()-st;
+                    if (time>=mark) {
+                        mark+=1000_000;
+                        System.out.printf("%d %d %d%n",work,search_work,time);
+                    }
+                    work++;
+                    int[] CT=sum(sparseTrimatTensors.get(ia),sparseTrimatTensors.get(ib));
+                    int[][] aCT=Searcher.closestWithin(minorMap,CT,MAXDIST);
                     if (aCT[0]!=null) {
                         int scr=aCT[1][0];
                         histogram[scr]++;
                         if (scr<bscr) {
                             bscr=scr;
-                            int[][] info=mapMinor.get(aCT[0]);
                             System.out.println("scr="+scr);
-                            System.out.println("All"); for (int i:info[0]) System.out.println(arr2_str(mapAll.get(kAll.get(i))));
-                            System.out.println("C"); for (int i:info[1]) System.out.println(arr2_str(mapC.get(kC.get(i))));
-                            System.out.println("$"); for (int i:info[2]) System.out.println(arr2_str(map$.get(k$.get(i))));
-                            System.out.println("$C"); for (int i:info[3]) System.out.println(arr2_str(map$C.get(k$C.get(i))));
-                            System.out.println("$CC"); for (int i:info[4]) System.out.println(arr2_str(map$CC.get(k$CC.get(i))));
-                            System.out.println("major"); for (int[] K:new int[][] {majA,majB}) System.out.println(arr2_str(mapMajor.get(K)));
+                            System.out.println("minor:");
+                            for (int i:minorMap.get(aCT[0])[0])
+                                System.out.println(trimat2str(bin2trimat(
+                                        minorGroupMaps[minorGroupSizes.get(i)].get(minorGroupTensors.get(i))[0][0]
+                                )));
+                            System.out.println("major:");
+                            for (int code:new int[] {sparseTrimatCodes.get(ia),sparseTrimatCodes.get(ib)})
+                                System.out.println(trimat2str(bin2trimat(code)));
                         }
                     }
-                    long time=System.currentTimeMillis()-st;
-                    if (time>=mark) {
-                        mark+=100_000;
-                        System.out.printf("%d %d %d%n",work,search_work,time);
-                    }
-                    work++;
                 }
             System.out.printf("%d %d %d%n",work,search_work,System.currentTimeMillis()-st);
             System.out.println("histogram="+Arrays.toString(histogram));
         }
+
     }
 }
