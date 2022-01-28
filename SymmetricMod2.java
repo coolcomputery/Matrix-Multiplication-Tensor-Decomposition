@@ -1,5 +1,4 @@
 import java.util.*;
-//same as SymmetricBruteForce.java, but everything is mod 2
 public class SymmetricMod2 {
     private static String trimat2str(int[][] A) {
         StringBuilder s=new StringBuilder("(");
@@ -15,7 +14,6 @@ public class SymmetricMod2 {
     private static int NPERMS, MAJOR_GROUP_SIZE;
     private static int[][] permutedMatCodes;
     private static int[] t1nsor(int[] X, int[] Y, int[] Z) {
-        //TODO: IMPROVE CACHE MISSES
         int[] T=new int[N6];
         for (int ab=0; ab<N2; ab++) if (X[ab]!=0)
             for (int cd=0; cd<N2; cd++) if (Y[cd]!=0)
@@ -79,7 +77,7 @@ public class SymmetricMod2 {
         }
     }
     private interface ArrMap {
-        //efficient map int[] --> smth
+        //efficient map int[] --> int[][]
         void put(int[] A, int[][] v);
         int[][] get(int[] A);
         List<int[]> keys();
@@ -187,7 +185,7 @@ public class SymmetricMod2 {
             }
             int d=depth[i];
             if (d<G-1)
-                for (int b=0; b<2; b++) if (cidxs[i][b]<0) {
+                for (int b=0; b<2; b++) if (cidxs[i][b]>-1) {
                     stack.add(b);
                     dfs(cidxs[i][b]);
                     stack.remove(stack.size()-1);
@@ -258,7 +256,6 @@ public class SymmetricMod2 {
     private static List<Integer> minorGroupSizes;
     private static List<Integer> dfs_info;
     private static long TIME_ST, TIME_MARK, dfs_work;
-    //TODO: fix stack overflow error
     private static void generateMinorMap(int[] CT, int i, int rank) {
         long time=System.currentTimeMillis()-TIME_ST;
         if (time>TIME_MARK) {
@@ -271,14 +268,13 @@ public class SymmetricMod2 {
             int nrank=rank+minorGroupSizes.get(j);
             if (nrank<=MAX_Rminor) {
                 dfs_info.add(j);
-                int[] nCT=sum(CT,minorGroupTensors.get(j));
-                int[] K=sum(CTARGET,nCT); //A-B == A+B mod 2
+                int[] K=sum(CT,minorGroupTensors.get(j));
                 if (minorMap.get(K)==null || minorMap.get(K)[1][0]>nrank) {
                     int[] info_arr=new int[dfs_info.size()];
                     for (int k=0; k<info_arr.length; k++) info_arr[k]=dfs_info.get(k);
                     minorMap.put(K,new int[][] {info_arr,{nrank}});
                 }
-                generateMinorMap(nCT,j,nrank);
+                generateMinorMap(K,j,nrank);
                 dfs_info.remove(dfs_info.size()-1);
             }
         }
@@ -288,8 +284,8 @@ public class SymmetricMod2 {
         System.out.println("max heap size="+Runtime.getRuntime().maxMemory());
         System.out.println("current heap usage="+Runtime.getRuntime().totalMemory());
         N=3;
-        int NMAJOR=1, MAXNZ=Integer.MAX_VALUE, MAXDIST=6;
-        String MODE="ALLPERM";
+        int NMAJOR=2, MAXNZ=20, MAXDIST=6;
+        String MODE="SHIFT";
         System.out.printf("N=%d,NMAJOR=%d,MAXNZ=%d,MAXDIST=%d,MODE=%s%n",N,NMAJOR,MAXNZ,MAXDIST,MODE);
 
         N2=N*N; N4=N2*N2; N6=N4*N2;
@@ -298,6 +294,7 @@ public class SymmetricMod2 {
             TARGET[(i*N+j)*N4+(j*N+k)*N2+(k*N+i)]=1;
         MASK=(1<<N2)-1;
 
+        //generate the set of transformation functions that will be used to enforce symmetry
         {
             List<int[]> perms;
             switch (MODE) {
@@ -308,7 +305,7 @@ public class SymmetricMod2 {
                         perms.add(p);
                     }
                     break;
-                case "ALLPERM":
+                case "S3":
                     perms=new ArrayList<>(Collections.singletonList(new int[] {0}));
                     for (int n=2; n<=N; n++) {
                         List<int[]> tmp=new ArrayList<>();
@@ -340,6 +337,7 @@ public class SymmetricMod2 {
         }
         MAJOR_GROUP_SIZE=3*NPERMS;
 
+        //create the index groups used for tensor compression
         groupNum=new int[N6]; Arrays.fill(groupNum,-1); G=0; {
             int[] log2=new int[1<<N2]; for (int i=0; i<N2; i++) log2[1<<i]=i;
             for (int i=0; i<N2; i++) for (int j=0; j<N2; j++) for (int k=0; k<N2; k++) if (groupNum[i*N4+j*N2+k]==-1) {
@@ -363,8 +361,9 @@ public class SymmetricMod2 {
         }
         CTARGET=compress(TARGET);
 
+        //enumerate all minor groups
         ArrMap[] minorGroupMaps=new ArrMap[MAJOR_GROUP_SIZE];
-        for (int sz = 1; sz< MAJOR_GROUP_SIZE; sz++) minorGroupMaps[sz]=new MapArrMap(); {
+        for (int sz=1; sz<MAJOR_GROUP_SIZE; sz++) minorGroupMaps[sz]=new MapArrMap(); {
             long st=System.currentTimeMillis();
             long work=0;
             int[] symmGroupSzHist=new int[MAJOR_GROUP_SIZE];
@@ -391,7 +390,7 @@ public class SymmetricMod2 {
         System.out.println("generating minor map");
         minorGroupTensors=new ArrayList<>();
         minorGroupSizes=new ArrayList<>();
-        for (int S = 1; S< MAJOR_GROUP_SIZE; S++)
+        for (int S = 1; S<MAJOR_GROUP_SIZE; S++)
             for (int[] K:minorGroupMaps[S].keys()) {
                 minorGroupTensors.add(K);
                 minorGroupSizes.add(S);
@@ -399,6 +398,7 @@ public class SymmetricMod2 {
         nMinor=minorGroupTensors.size();
         System.out.println(nMinor+" total minor groups");
 
+        //generate all possible minor decomposition portions with low enough rank
         MAX_Rminor=23-MAJOR_GROUP_SIZE*NMAJOR;
         if (MAX_Rminor<0) throw new RuntimeException("Too many major groups to fit minor group in decomposition of rank <=23.");
         System.out.println("MAX_Rminor="+MAX_Rminor);
@@ -409,9 +409,9 @@ public class SymmetricMod2 {
         generateMinorMap(new int[G],0,0);
         System.out.printf("%d %d %d%n",System.currentTimeMillis()-TIME_ST,dfs_work,minorMap.size());
 
+        //generate map containing sparse major groups
         System.out.println("generating sparse major matrix triplets");
-        List<Integer> sparseTrimatCodes=new ArrayList<>();
-        List<int[]> sparseTrimatTensors=new ArrayList<>(); {
+        BinaryTrieArrMap sparseMajorMap=new BinaryTrieArrMap(); {
             long st=System.currentTimeMillis(), mark=0;
             boolean[] taken=new boolean[1<<(3*N2)];
             int[] bitcnt=new int[1<<N2];
@@ -423,50 +423,51 @@ public class SymmetricMod2 {
                         long time=System.currentTimeMillis()-st;
                         if (time>=mark) {
                             mark+=10_000;
-                            System.out.printf("%d %d%n",sparseTrimatCodes.size(),time);
+                            System.out.printf("%d %d%n",sparseMajorMap.size(),time);
                         }
                         int tricode=a|(b<<N2)|(c<<(2*N2));
                         if (!taken[tricode]) {
                             int[] codes=tri_group_codes(a,b,c);
                             for (int code:codes) taken[code]=true;
-                            sparseTrimatCodes.add(tricode);
-                            sparseTrimatTensors.add(compress(sumdecomp(tricodes2trimats(codes))));
+                            sparseMajorMap.put(compress(sumdecomp(tricodes2trimats(codes))),new int[][] {{tricode}});
                         }
                     }
-            System.out.printf("%d %d%n",sparseTrimatCodes.size(),System.currentTimeMillis()-st);
-            System.out.println(sparseTrimatCodes.size()+" sparse matrix triplets");
+            System.out.printf("%d %d%n",sparseMajorMap.size(),System.currentTimeMillis()-st);
+            System.out.println(sparseMajorMap.size()+" sparse matrix triplets");
             System.out.println("current heap usage="+Runtime.getRuntime().totalMemory());
         }
 
+        //search
         System.out.println("searching");
         long[] histogram=new long[MAXDIST+1];
-        long st=System.currentTimeMillis(), mark=0;
+        List<int[]> sparseMajorKs=sparseMajorMap.keys();
         int bscr=Integer.MAX_VALUE;
         long work=0; search_work=0;
+        long st=System.currentTimeMillis(), mark=0;
         switch (NMAJOR) {
             case 1:
-                for (int ia=0; ia<sparseTrimatCodes.size(); ia++) {
+                for (int[] minorK:minorMap.keys()) {
                     long time=System.currentTimeMillis()-st;
                     if (time>=mark) {
-                        mark+=100_000;
+                        mark+=1000_000;
                         System.out.printf("%d %d %d%n",work,search_work,time);
                     }
                     work++;
-                    int[] CT=sparseTrimatTensors.get(ia);
-                    int[][] aCT=Searcher.closestWithin(minorMap,CT,MAXDIST);
+                    int[] CT=sum(CTARGET,minorK); //A-B == A+B mod 2
+                    int[][] aCT=Searcher.closestWithin(sparseMajorMap,CT,MAXDIST);
                     if (aCT[0]!=null) {
                         int scr=aCT[1][0];
                         histogram[scr]++;
-                        if (scr<=bscr) {
+                        if (scr<bscr) {
                             bscr=scr;
                             System.out.println("scr="+scr);
                             System.out.println("minor:");
-                            for (int i:minorMap.get(aCT[0])[0])
+                            for (int i:minorMap.get(minorK)[0])
                                 System.out.println(trimat2str(bin2trimat(
                                         minorGroupMaps[minorGroupSizes.get(i)].get(minorGroupTensors.get(i))[0][0]
                                 )));
                             System.out.println("major:");
-                            System.out.println(trimat2str(bin2trimat(sparseTrimatCodes.get(ia))));
+                            System.out.println(trimat2str(bin2trimat(sparseMajorMap.get(aCT[0])[0][0])));
 
                         }
                     }
@@ -475,29 +476,29 @@ public class SymmetricMod2 {
                 System.out.println("histogram="+Arrays.toString(histogram));
                 break;
             case 2:
-                for (int ia=0; ia<sparseTrimatCodes.size(); ia++)
-                    for (int ib=0; ib<=ia; ib++) {
+                for (int[] minorK:minorMap.keys())
+                    for (int[] sparseMajorK:sparseMajorKs) {
                         long time=System.currentTimeMillis()-st;
                         if (time>=mark) {
-                            mark+=100_000;
+                            mark+=1000_000;
                             System.out.printf("%d %d %d%n",work,search_work,time);
                         }
                         work++;
-                        int[] CT=sum(sparseTrimatTensors.get(ia),sparseTrimatTensors.get(ib));
-                        int[][] aCT=Searcher.closestWithin(minorMap,CT,MAXDIST);
+                        int[] CT=sum(CTARGET,sum(sparseMajorK,minorK)); //A-B == A+B mod 2
+                        int[][] aCT=Searcher.closestWithin(sparseMajorMap,CT,MAXDIST);
                         if (aCT[0]!=null) {
                             int scr=aCT[1][0];
                             histogram[scr]++;
-                            if (scr<=bscr) {
+                            if (scr<bscr) {
                                 bscr=scr;
                                 System.out.println("scr="+scr);
                                 System.out.println("minor:");
-                                for (int i:minorMap.get(aCT[0])[0])
+                                for (int i:minorMap.get(minorK)[0])
                                     System.out.println(trimat2str(bin2trimat(
                                             minorGroupMaps[minorGroupSizes.get(i)].get(minorGroupTensors.get(i))[0][0]
                                     )));
                                 System.out.println("major:");
-                                for (int code:new int[] {sparseTrimatCodes.get(ia),sparseTrimatCodes.get(ib)})
+                                for (int code:new int[] {sparseMajorMap.get(sparseMajorK)[0][0],sparseMajorMap.get(aCT[0])[0][0]})
                                     System.out.println(trimat2str(bin2trimat(code)));
                             }
                         }
