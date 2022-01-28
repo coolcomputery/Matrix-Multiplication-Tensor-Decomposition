@@ -13,12 +13,13 @@ public class SymmetricMod2 {
     private static int MASK;
     private static int NPERMS, MAJOR_GROUP_SIZE;
     private static int[][] permutedMatCodes;
+    //over mod 2, a+b = a bitwise_xor b = a^b and a*b = a bitwise_and b = a&b
     private static int[] t1nsor(int[] X, int[] Y, int[] Z) {
         int[] T=new int[N6];
         for (int ab=0; ab<N2; ab++) if (X[ab]!=0)
             for (int cd=0; cd<N2; cd++) if (Y[cd]!=0)
                 for (int ef=0; ef<N2; ef++) if (Z[ef]!=0)
-                    T[ab*N4+cd*N2+ef]=X[ab]*Y[cd]*Z[ef];
+                    T[ab*N4+cd*N2+ef]=X[ab]&Y[cd]&Z[ef];
         return T;
     }
     private static int[] t1nsor(int[][] tri) {
@@ -27,7 +28,7 @@ public class SymmetricMod2 {
     private static int[] sum(int[] A, int[] B) {
         if (A.length!=B.length) throw new RuntimeException();
         int[] C=new int[A.length];
-        for (int i=0; i<A.length; i++) C[i]=(A[i]+B[i])%2;
+        for (int i=0; i<A.length; i++) C[i]=A[i]^B[i];
         return C;
     }
     private static int[] sumdecomp(List<int[][]> tris) {
@@ -284,7 +285,7 @@ public class SymmetricMod2 {
         System.out.println("max heap size="+Runtime.getRuntime().maxMemory());
         System.out.println("current heap usage="+Runtime.getRuntime().totalMemory());
         N=3;
-        int NMAJOR=2, MAXNZ=20, MAXDIST=6;
+        int NMAJOR=2, MAXNZ=28, MAXDIST=6;
         String MODE="SHIFT";
         System.out.printf("N=%d,NMAJOR=%d,MAXNZ=%d,MAXDIST=%d,MODE=%s%n",N,NMAJOR,MAXNZ,MAXDIST,MODE);
 
@@ -476,7 +477,10 @@ public class SymmetricMod2 {
                 System.out.println("histogram="+Arrays.toString(histogram));
                 break;
             case 2:
-                for (int[] minorK:minorMap.keys())
+                for (int[] minorK:minorMap.keys()) {
+                    //A-B == A+B mod 2
+                    //so CTARGET-minorK-sparseMajorK == sparseMajorK+(CTARGET+minorK) == sparseMajorK+tmp mod 2
+                    int[] tmp=sum(CTARGET,minorK);
                     for (int[] sparseMajorK:sparseMajorKs) {
                         long time=System.currentTimeMillis()-st;
                         if (time>=mark) {
@@ -484,7 +488,7 @@ public class SymmetricMod2 {
                             System.out.printf("%d %d %d%n",work,search_work,time);
                         }
                         work++;
-                        int[] CT=sum(CTARGET,sum(sparseMajorK,minorK)); //A-B == A+B mod 2
+                        int[] CT=sum(sparseMajorK,tmp);
                         int[][] aCT=Searcher.closestWithin(sparseMajorMap,CT,MAXDIST);
                         if (aCT[0]!=null) {
                             int scr=aCT[1][0];
@@ -503,6 +507,7 @@ public class SymmetricMod2 {
                             }
                         }
                     }
+                }
                 System.out.printf("%d %d %d%n",work,search_work,System.currentTimeMillis()-st);
                 System.out.println("histogram="+Arrays.toString(histogram));
                 break;
