@@ -255,7 +255,7 @@ public class SymmetricMod2 {
         N=3;
         N2=N*N; N4=N2*N2; N6=N4*N2;
 
-        int MAX_Rm=5, MAX_SM=3, MAX_Zm=729, MAX_ZM=4; String MODE="FLIP";
+        int MAX_Rm=23, MAX_SM=0, MAX_Zm=729, MAX_ZM=0; String MODE="SHIFT";
         System.out.printf("N=%d MAX_Rm=%d MAX_SM=%d MAX_Zm=%d MAX_ZM=%d MODE=%s%n",N,MAX_Rm,MAX_SM,MAX_Zm,MAX_ZM,MODE);
 
         BigInteger MEM_LIMIT=new BigInteger(""+1000_000_000); int DFS_TIME_LIMIT=100_000;
@@ -454,6 +454,7 @@ public class SymmetricMod2 {
         { //calculate theoretical optimal score
             BigInteger all=BigInteger.ZERO;
             for (int[] p:profiles) all=all.add(PROFILECOST.cost(p));
+            System.out.println("size of entire search space="+all);
             BigInteger arg=(all.sqrt()).min(MEM_LIMIT);
             System.out.println("theoretical lowest score="+arg.add(all.divide(arg)));
         }
@@ -642,6 +643,7 @@ public class SymmetricMod2 {
                             int[] A=new int[N2]; for (int i=0; i<N2; i++) A[i]=(m>>i)&1;
                             s.append(Arrays.toString(A)).append(",");
                         }
+                        s.append("  ");
                     }
                     s.append("\n");
                 }
