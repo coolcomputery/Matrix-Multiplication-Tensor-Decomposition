@@ -94,75 +94,101 @@ public class SymmetricMod2 {
         return out;
     }
 
-    static class TableDFS {
-        static long DFS_TIME_LIMIT; static BigInteger MEM_LIMIT;
-        BigInteger[] coordCost;
-        //[n] denotes the set {0,...n-1}
-        //given symmetric n x n matrix A, A[i][j] \in [k],
-        //find R,C \subseteq [n] s.t. {A[r][c] | r \in R, c \in C} \supseteq [k]
-        //s.t. c(R)+c(C) is minimized, where c(S)=sum_{i \in S} cost[i] for some given array cost
-        //WLOG assume c(R)<=c(C)
-        int n, k;
-        List<List<Integer>> locs;
-        boolean[] rowTaken, clmTaken;
-        boolean[][] bsol; BigInteger bscr; BigInteger[] bcostInfo;
-        long st, mark, work;
-        private void dfs(int v, BigInteger totRowCost, BigInteger totClmCost) {
-            long time=System.currentTimeMillis()-st;
-            if (time>=mark) {
-                mark+=10_000;
-                System.out.printf("work=%d bscr=%d t=%d%n",work,bscr,time);
+    static class BeamSearch {
+        int[][] A; BigInteger[] C;
+        int N, S;
+        BigInteger cost(boolean[] set) {
+            BigInteger out=BigInteger.ZERO;
+            for (int c=0; c<N; c++) if (set[c]) out=out.add(C[c]);
+            return out;
+        }
+        BigInteger scr(boolean[][][] minors) {
+            BigInteger out=BigInteger.ZERO;
+            for (boolean[][] minor:minors)
+                out=out.add(cost(minor[0])).add(cost(minor[1]));
+            return out;
+        }
+        boolean[][][] bminors; BigInteger bscr;
+        class Sol implements Comparable<Sol> {
+            boolean[][][] minors;
+            BigInteger scr;
+            Sol() {
+                minors=new boolean[S][2][N];
+                scr=BigInteger.ZERO;
             }
-            if (time>=DFS_TIME_LIMIT) return;
-            if (totRowCost.compareTo(MEM_LIMIT)>0 || totRowCost.compareTo(totClmCost)>0) return;
-            work++;
-            BigInteger scr=totRowCost.add(totClmCost);
-            if (v==k) {
-                if (bscr==null || scr.compareTo(bscr)<0) {
-                    bscr=scr;
-                    bsol=new boolean[][] {Arrays.copyOf(rowTaken,n),Arrays.copyOf(clmTaken,n)};
-                    bcostInfo=new BigInteger[] {totRowCost,totClmCost};
-                }
-                return;
+            boolean contains(int v) {
+                for (boolean[][] minor:minors)
+                    for (int r=0; r<N; r++) if (minor[0][r])
+                        for (int c=0; c<N; c++) if (minor[1][c])
+                            if (A[r][c]==v) return true;
+                return false;
             }
-            for (int loc:locs.get(v)) if (rowTaken[loc/n] && clmTaken[loc%n]) {
-                dfs(v+1,totRowCost,totClmCost);
-                return;
+            Sol add(int[] l, int g) {
+                boolean[][][] nminors=new boolean[S][][];
+                for (int s=0; s<S; s++) nminors[s]=new boolean[][] {Arrays.copyOf(minors[s][0],N),Arrays.copyOf(minors[s][1],N)};
+                nminors[g][0][l[0]]=true;
+                nminors[g][1][l[1]]=true;
+                BigInteger nscr=scr.add(minors[g][0][l[0]]?BigInteger.ZERO:C[l[0]]).add(minors[g][1][l[1]]?BigInteger.ZERO:C[l[1]]);
+                Sol out=new Sol();
+                out.minors=nminors;
+                out.scr=nscr;
+                return out;
             }
-            BigInteger[] dscr=new BigInteger[n*n];
-            List<Integer> sortedLocs=new ArrayList<>(locs.get(v));
-            for (int loc:sortedLocs) {
-                int r=loc/n, c=loc%n;
-                dscr[loc]=(rowTaken[r]?BigInteger.ZERO:coordCost[r]).add(clmTaken[c]?BigInteger.ZERO:coordCost[c]);
-            }
-            sortedLocs.sort(new Comparator<Integer>() {
-                public int compare(Integer o1, Integer o2) {
-                    return dscr[o1].compareTo(dscr[o2]);
-                }
-            });
-            for (int loc:sortedLocs) {
-                if (bscr!=null && (scr.add(dscr[loc])).compareTo(bscr)>=0) break;
-                int r=loc/n, c=loc%n;
-                boolean r0=rowTaken[r], c0=clmTaken[c];
-                rowTaken[r]=true; clmTaken[c]=true;
-                dfs(v+1,totRowCost.add(r0?BigInteger.ZERO: coordCost[r]),totClmCost.add(c0?BigInteger.ZERO:coordCost[c]));
-                rowTaken[r]=r0; clmTaken[c]=c0;
+            public int compareTo(Sol s) {
+                return scr.compareTo(s.scr);
             }
         }
-        public TableDFS(int[][] table, BigInteger[] coordCost, int k) {
-            st=System.currentTimeMillis(); mark=0; work=0;
-            this.coordCost=coordCost;
-            n=table.length; this.k=k;
-            locs=new ArrayList<>();
-            for (int v=0; v<k; v++) locs.add(new ArrayList<>());
-            for (int i=0; i<n; i++) for (int j=0; j<n; j++) {
-                int v=table[i][j];
-                if (v>-1) locs.get(v).add(i*n+j);
+        class Mod implements Comparable<Mod> {
+            int[] l; int g, i;
+            BigInteger scr;
+            Mod(int[] l, int g, int i, BigInteger scr) {
+                this.l=l; this.g=g; this.i=i; this.scr=scr;
             }
-            rowTaken=new boolean[n]; clmTaken=new boolean[n];
-            bsol=null; bscr=null; bcostInfo=null;
-            dfs(0,BigInteger.ZERO,BigInteger.ZERO);
-            System.out.printf("work=%d bscr=%d t=%d%n",work,bscr,System.currentTimeMillis()-st);
+            public int compareTo(Mod o) {
+                return scr.compareTo(o.scr);
+            }
+        }
+        BeamSearch(int[][] A, BigInteger[] C, int S, BigInteger MAXTOTROW) {
+            N=A.length;
+            this.A=A; this.C=C; this.S=S;
+            List<List<int[]>> locs=new ArrayList<>();
+            for (int i=0; i<N; i++) locs.add(new ArrayList<>());
+            for (int r=0; r<N; r++) if (C[r].compareTo(MAXTOTROW)<=0) for (int c=0; c<N; c++) if (A[r][c]>-1)
+                locs.get(A[r][c]).add(new int[] {r,c});
+
+            long st=System.currentTimeMillis();
+            List<Sol> sols=new ArrayList<>(Collections.singletonList(new Sol()));
+            int BEAMLIM=10000;
+            for (int v=N-1; v>-1; v--) { //for some reason, going backwards produces a much better result than going forwards
+                List<Mod> mods=new ArrayList<>();
+                for (int i=0; i<sols.size(); i++) {
+                    Sol sol=sols.get(i);
+                    if (sol.contains(v)) mods.add(new Mod(null,-1,i,sol.scr));
+                    else {
+                        for (int[] l:locs.get(v)) {
+                            for (int g=0; g<S; g++) {
+                                BigInteger nscr=sol.scr.add(sol.minors[g][0][l[0]]?BigInteger.ZERO:C[l[0]])
+                                        .add(sol.minors[g][1][l[1]]?BigInteger.ZERO:C[l[1]]);
+                                boolean[] minorr=sol.minors[g][0];
+                                if (minorr[l[0]] || (cost(minorr).add(C[l[0]])).compareTo(MAXTOTROW)<=0)
+                                    mods.add(new Mod(l,g,i,nscr));
+                            }
+                        }
+                    }
+                }
+                Collections.sort(mods);
+                List<Sol> nsols=new ArrayList<>();
+                for (int mi=0; mi<Math.min(mods.size(),BEAMLIM); mi++) {
+                    Mod m=mods.get(mi);
+                    Sol sol=sols.get(m.i);
+                    nsols.add(m.l==null?sol:sol.add(m.l,m.g));
+                }
+                sols=nsols;
+            }
+            bminors=sols.get(0).minors;
+            bscr=scr(bminors);
+            if (bscr.compareTo(sols.get(0).scr)!=0) throw new RuntimeException();
+            System.out.println("time="+(System.currentTimeMillis()-st));
         }
     }
 
@@ -255,11 +281,11 @@ public class SymmetricMod2 {
         N=3;
         N2=N*N; N4=N2*N2; N6=N4*N2;
 
-        int MAX_Rm=23, MAX_SM=0, MAX_Zm=729, MAX_ZM=0; String MODE="SHIFT";
-        System.out.printf("N=%d MAX_Rm=%d MAX_SM=%d MAX_Zm=%d MAX_ZM=%d MODE=%s%n",N,MAX_Rm,MAX_SM,MAX_Zm,MAX_ZM,MODE);
+        int MAX_R=22, MAX_Z=12; String MODE="FLIP";
+        System.out.printf("N=%d MAX_R=%d MAX_Z=%d MODE=%s%n",N,MAX_R,MAX_Z,MODE);
 
-        BigInteger MEM_LIMIT=new BigInteger(""+1000_000_000); int DFS_TIME_LIMIT=100_000;
-        System.out.printf("MEM_LIMIT=%d DFS_TIME_LIMIT=%d%n",MEM_LIMIT,DFS_TIME_LIMIT);
+        BigInteger MEM_LIMIT=new BigInteger(""+1000_000_000);
+        System.out.printf("MEM_LIMIT=%d%n",MEM_LIMIT);
 
         int[] TARGET=new int[N6];
         for (int i=0; i<N; i++) for (int j=0; j<N; j++) for (int k=0; k<N; k++)
@@ -270,6 +296,12 @@ public class SymmetricMod2 {
         {
             List<int[]> perms;
             switch (MODE) {
+                case "CYCLIC":
+                    perms=new ArrayList<>(); {
+                        int[] p=new int[N]; for (int i=0; i<N; i++) p[i]=i;
+                        perms.add(p);
+                    }
+                    break;
                 case "FLIP":
                     perms=new ArrayList<>();
                     for (int t=0; t<2; t++) {
@@ -313,8 +345,7 @@ public class SymmetricMod2 {
                 }
         }
         MAJOR_GROUP_SIZE=3*NPERMS;
-        int MAXRANK=MAX_Rm+MAJOR_GROUP_SIZE*MAX_SM;
-        System.out.println("MAJOR_GROUP_SIZE="+MAJOR_GROUP_SIZE+" MAXRANK="+MAXRANK);
+        System.out.println("MAJOR_GROUP_SIZE="+MAJOR_GROUP_SIZE);
 
         //create the index groups used for tensor compression
         {
@@ -330,7 +361,7 @@ public class SymmetricMod2 {
             System.out.println("G="+G);
             int[] compressionClassSizes=new int[G];
             for (int i=0; i<N6; i++) compressionClassSizes[compressionClassNum[i]]++;
-                compressionClasses=new int[G][]; {
+            compressionClasses=new int[G][]; {
                 for (int g=0; g<G; g++) compressionClasses[g]=new int[compressionClassSizes[g]];
                 int[] tmp=new int[G];
                 for (int i=0; i<N6; i++) {
@@ -368,7 +399,7 @@ public class SymmetricMod2 {
                         }
                     triGroup=Arrays.copyOf(triGroup,S);
                     boolean major=S==MAJOR_GROUP_SIZE;
-                    if (bitcnt[a]*bitcnt[b]*bitcnt[c]<=(major?MAX_ZM:MAX_Zm)) {
+                    if (bitcnt[a]*bitcnt[b]*bitcnt[c]<=MAX_Z) {
                         groupSzHist[S]++;
                         groupSize[triplet]=S;
                         int[] eval=symmCompress(xortensor(triGroup));
@@ -394,48 +425,31 @@ public class SymmetricMod2 {
         System.out.println(Arrays.toString(triCnts));
 
         class Profiles {
-            static List<int[]> out;
-            static int[] limits;
-            static int[] freq;
-            static int maxTot;
-            static void dfs(int rank, int m) {
+            List<int[]> out;
+            int[] limits;
+            int[] freq;
+            int maxTot;
+            void dfs(int rankLeft, int m) {
                 if (m==0) {
                     out.add(Arrays.copyOf(freq,freq.length));
                     return;
                 }
-                for (int cnt=0; rank-cnt*m>=0 && cnt<=limits[m]; cnt++) {
+                for (int cnt=0; rankLeft-cnt*m>=0 && cnt<=limits[m]; cnt++) {
                     freq[m]=cnt;
-                    dfs(rank-cnt*m,m-1);
+                    dfs(rankLeft-cnt*m,m-1);
                 }
             }
-            static List<int[]> generate(int maxTot, int[] limits) {
-                Profiles.maxTot=maxTot; Profiles.limits=limits;
+            List<int[]> generate(int maxTot, int[] limits) {
+                this.maxTot=maxTot; this.limits=limits;
                 out=new ArrayList<>();
                 freq=new int[limits.length];
                 dfs(maxTot,limits.length-1);
                 return out;
             }
         }
-        List<int[]> profiles=new ArrayList<>(); {
-            int[] minor_triCnts=Arrays.copyOf(triCnts,MAJOR_GROUP_SIZE+1);
-            minor_triCnts[MAJOR_GROUP_SIZE]=0;
-            for (int[] pmin:Profiles.generate(MAX_Rm,minor_triCnts))
-                for (int s=0; s<=MAX_SM; s++) {
-                    int[] p=Arrays.copyOf(pmin,MAJOR_GROUP_SIZE+1);
-                    p[MAJOR_GROUP_SIZE]=s;
-                    profiles.add(p);
-                }
-            System.out.println("profiles");
-        }
+        List<int[]> profiles=new Profiles().generate(MAX_R,triCnts);
         int nP=profiles.size();
         System.out.println("# profiles="+nP);
-
-        int[][] table=new int[nP][nP]; {
-            Map<String,Integer> profile2id=new HashMap<>();
-            for (int pi=0; pi<nP; pi++) profile2id.put(Arrays.toString(profiles.get(pi)),pi);
-            for (int pi=0; pi<nP; pi++) for (int pj=0; pj<nP; pj++)
-                table[pi][pj]=profile2id.getOrDefault(Arrays.toString(listSum(profiles.get(pi),profiles.get(pj))),-1);
-        }
 
         class ProfileCost {
             private static BigInteger nCr(int n, int k) {
@@ -450,29 +464,53 @@ public class SymmetricMod2 {
                 for (int r=1; r<=MAJOR_GROUP_SIZE; r++) n=n.multiply(nCr(triCnts[r],p[r]));
                 return n;
             }
+            BigInteger cost(List<int[]> P) {
+                BigInteger out=BigInteger.ZERO;
+                for (int[] p:P) out=out.add(cost(p));
+                return out;
+            }
         } ProfileCost PROFILECOST=new ProfileCost();
-        { //calculate theoretical optimal score
-            BigInteger all=BigInteger.ZERO;
-            for (int[] p:profiles) all=all.add(PROFILECOST.cost(p));
-            System.out.println("size of entire search space="+all);
-            BigInteger arg=(all.sqrt()).min(MEM_LIMIT);
-            System.out.println("theoretical lowest score="+arg.add(all.divide(arg)));
-        }
 
-        List<int[]> P0=new ArrayList<>(), P1=new ArrayList<>(); {
+        System.out.println("size of entire search space="+PROFILECOST.cost(profiles));
+
+        List<List<int[]>> P0s=new ArrayList<>(), P1s=new ArrayList<>(); {
+            int[][] table=new int[nP][nP]; {
+                Map<String,Integer> profile2id=new HashMap<>();
+                for (int pi=0; pi<nP; pi++) profile2id.put(Arrays.toString(profiles.get(pi)),pi);
+                for (int pi=0; pi<nP; pi++) for (int pj=0; pj<nP; pj++)
+                    table[pi][pj]=profile2id.getOrDefault(Arrays.toString(listSum(profiles.get(pi),profiles.get(pj))),-1);
+            }
             BigInteger[] costs=new BigInteger[nP];
             for (int pi=0; pi<nP; pi++) costs[pi]=PROFILECOST.cost(profiles.get(pi));
-            TableDFS.DFS_TIME_LIMIT=DFS_TIME_LIMIT; TableDFS.MEM_LIMIT=MEM_LIMIT;
-            TableDFS info=new TableDFS(table,costs,nP);
-            System.out.println("expected costs="+Arrays.toString(info.bcostInfo));
-            boolean[][] bdivide=info.bsol;
-            for (int pi=0; pi<nP; pi++) if (bdivide[0][pi]) P0.add(profiles.get(pi));
-            for (int pi=0; pi<nP; pi++) if (bdivide[1][pi]) P1.add(profiles.get(pi));
-            System.out.print("map "); for (int[] p:P0) System.out.print(" "+Arrays.toString(p)); System.out.println();
-            System.out.print("iter"); for (int[] p:P1) System.out.print(" "+Arrays.toString(p)); System.out.println();
-            //check that product is valid
+
+            System.out.println("beam search");
+            boolean[][][] bsol=null;
+            BigInteger pscr=null;
+            for (int S=1; S<=N; S++) {
+                BeamSearch $=new BeamSearch(table,costs,S,MEM_LIMIT);
+                System.out.println(S+" "+$.bscr);
+                if (pscr!=null && pscr.compareTo($.bscr)<=0) break;
+                else {
+                    pscr=$.bscr;
+                    bsol=$.bminors;
+                }
+            }
+
+            System.out.println("totCost="+pscr);
+            for (boolean[][] m:bsol) {
+                List<int[]> P0=new ArrayList<>(), P1=new ArrayList<>();
+                for (int p=0; p<nP; p++) if (m[0][p]) P0.add(profiles.get(p));
+                for (int p=0; p<nP; p++) if (m[1][p]) P1.add(profiles.get(p));
+                System.out.print("map "); for (int[] p:P0) System.out.print(" "+Arrays.toString(p)); System.out.println();
+                System.out.print("iter"); for (int[] p:P1) System.out.print(" "+Arrays.toString(p)); System.out.println();
+                P0s.add(P0); P1s.add(P1);
+                System.out.println(PROFILECOST.cost(P0)+" "+PROFILECOST.cost(P1));
+            }
+            //check validity
             Set<String> prod=new HashSet<>();
-            for (int[] p0:P0) for (int[] p1:P1) prod.add(Arrays.toString(listSum(p0,p1)));
+            for (int s=0; s<P0s.size(); s++)
+                for (int[] p0:P0s.get(s)) for (int[] p1:P1s.get(s))
+                    prod.add(Arrays.toString(listSum(p0,p1)));
             for (int[] p:profiles) if (!prod.contains(Arrays.toString(p))) throw new RuntimeException("Product does not contain "+Arrays.toString(p));
         }
 
@@ -512,14 +550,10 @@ public class SymmetricMod2 {
             }
         } TrisInfo $=new TrisInfo();
 
-        //converts int --> list of matrix triplets that it represents in D0
-        class D0Idx2Tris {
+        class D0Set {
+            //converts set of matrix triplets to int
+            List<int[]> P0;
             int[] amts;
-            public D0Idx2Tris() {
-                amts=new int[P0.size()];
-                for (int pi=0; pi<P0.size(); pi++)
-                    amts[pi]=PROFILECOST.cost(P0.get(pi)).intValue();
-            }
             int[] tris(int e) {
                 int pi=0;
                 for (; pi<P0.size(); pi++) {
@@ -536,28 +570,6 @@ public class SymmetricMod2 {
                 }
                 return toArr(out);
             }
-        } D0Idx2Tris D0HELPER=new D0Idx2Tris();
-
-        /*{
-            long st=System.currentTimeMillis(); final long[] mark={0};
-            int[] idx={0};
-            for (int[] p:P0) new ForEachSetOfProfile(p) { void process(int[] tris, int[] tensor) {
-                long time=System.currentTimeMillis()-st;
-                if (time>=mark[0]) {
-                    mark[0]+=10_000;
-                    System.out.printf("cnt=%d t=%d%n",idx[0],time);
-                }
-                int[] generated=D0HELPER.tris(idx[0]);
-                Arrays.sort(generated);
-                int[] tmpTris=Arrays.copyOf(tris,tris.length);
-                Arrays.sort(tmpTris);
-                if (!Arrays.equals(tmpTris,generated)) throw new RuntimeException("tris="+Arrays.toString(tris)+" generated="+Arrays.toString(generated));
-                idx[0]++;
-            }};
-            System.out.printf("cnt=%d t=%d m=%s%n",idx[0],System.currentTimeMillis()-st,memStats());
-        }*/
-
-        class D0Set {
             //stores a range of integers [0,R), where each integer e has an implicit associated array key(e)
             //when querying for a specific key: if key does not exist, return -1
             long searches, binSearches, binWork;
@@ -577,21 +589,26 @@ public class SymmetricMod2 {
                 for (int v:key) out^=v;
                 return ((out%H)+H)%H;
             }
-            public D0Set() {
+            public D0Set(List<int[]> P0) {
+                this.P0=P0;
+                amts=new int[P0.size()];
+                for (int pi=0; pi<P0.size(); pi++)
+                    amts[pi]=PROFILECOST.cost(P0.get(pi)).intValue();
+
                 int totCombos=0;
                 for (int[] p:P0) totCombos+=PROFILECOST.cost(p).intValue();
                 long st=System.currentTimeMillis();
                 chains=new GroupMerger() {
                     int group(int e) { return hash(tensor(e)); }
-                    int[] tensor(int e) { return $.tris2tensor(D0HELPER.tris(e)); }
-                    int score(int e) { return $.totrank(D0HELPER.tris(e)); }
+                    int[] tensor(int e) { return $.tris2tensor(tris(e)); }
+                    int score(int e) { return $.totrank(tris(e)); }
                 }.ret(totCombos,H);
 
                 st=System.currentTimeMillis();
                 filters=new long[Gd32][1<<26];
                 filterPassed=new long[Gd32];
                 for (int[] ch:chains) if (ch!=null) for (int e:ch) {
-                    int[] K=$.tris2tensor(D0HELPER.tris(e));
+                    int[] K=$.tris2tensor(tris(e));
                     for (int f=0; f<Gd32; f++) add(filters[f],K[f]);
                 }
                 System.out.println("bitset filter time="+(System.currentTimeMillis()-st)+" m="+memStats());
@@ -608,10 +625,10 @@ public class SymmetricMod2 {
                 while (lo<hi) {
                     binWork++;
                     int mi=(lo+hi)/2;
-                    if (compareTensors(K,$.tris2tensor(D0HELPER.tris(elems[mi])))<=0) hi=mi;
+                    if (compareTensors(K,$.tris2tensor(tris(elems[mi])))<=0) hi=mi;
                     else lo=mi+1;
                 }
-                return Arrays.equals(K,$.tris2tensor(D0HELPER.tris(elems[lo])))?elems[lo]:-1;
+                return Arrays.equals(K,$.tris2tensor(tris(elems[lo])))?elems[lo]:-1;
             }
             public int getXorOf(int[] Ka, int[] Kb) {
                 searches++;
@@ -622,12 +639,12 @@ public class SymmetricMod2 {
                 int[] K=xor(Ka,Kb);
                 return binsearch(chains[hash(K)],K);
             }
-        } D0Set D0=new D0Set();
+        }
 
         System.out.println("searching m="+memStats());
         int[] CTARGET=symmCompress(TARGET);
         BigInteger tot; {
-            BigInteger tmp=BigInteger.ZERO; for (int[] p:P1) tmp=tmp.add(PROFILECOST.cost(p));
+            BigInteger tmp=BigInteger.ZERO; for (List<int[]> P1:P1s) tmp=tmp.add(PROFILECOST.cost(P1));
             tot=tmp;
         }
         String statsString="%3f%% %3f%% searches=%d filterPassed=%s binSearches=%d binWork=%d t=%d total_t=%d m=%s%n";
@@ -662,55 +679,75 @@ public class SymmetricMod2 {
             }
         } Tester TESTER=new Tester();
 
-        for (int pi=0; pi<P1.size(); pi++) {
-            int[] p1=P1.get(pi);
-            D0.searches=0; Arrays.fill(D0.filterPassed,0); D0.binSearches=0; D0.binWork=0;
-            BigInteger p1tot=PROFILECOST.cost(p1);
-            System.out.printf("%d/%d %s expected # searches=%d%n",pi,P1.size(),Arrays.toString(p1),p1tot);
-            int firstRank; {
-                int tmp=-1;
-                for (int r=0; r<=MAJOR_GROUP_SIZE; r++) if (p1[r]>0) { tmp=r; break; }
-                firstRank=tmp;
-            }
-            long st=System.currentTimeMillis(); final long[] mark={0};
-            if (firstRank==-1) {
-                int e=D0.getXorOf(CTARGET,new int[Gd32]);
-                if (e>=0) TESTER.testSolution(D0HELPER.tris(e));
-            }
-            else {
-                int[] subp1=Arrays.copyOf(p1,MAJOR_GROUP_SIZE+1);
-                subp1[firstRank]--;
-                System.out.println("sub="+Arrays.toString(subp1));
-                long[] iters={0};
-                new ForEachSetOfProfile(subp1) {
-                    void process(int[] stris1, int[] stensor1) {
-                        if ((iters[0]&127)==0) {
-                            long time=System.currentTimeMillis()-st;
-                            if (time>=mark[0]) {
-                                if (mark[0]>0) System.out.printf(statsString,(D0.searches+searches0[0])/tot.doubleValue()*100,D0.searches/p1tot.doubleValue()*100,
-                                        D0.searches,Arrays.toString(D0.filterPassed),D0.binSearches,D0.binWork,time,System.currentTimeMillis()-search_st,memStats());
-                                mark[0]+=(mark[0]<100_000?10_000:100_000);
-                            }
-                        }
-                        iters[0]++;
-                        if (!Arrays.equals($.tris2tensor(stris1),stensor1)) throw new RuntimeException();
-                        int[] tmptensor=xor(CTARGET,stensor1);
-                        int maxIdx=(idxs.length==0 || subp1[firstRank]==0?triplets[firstRank].length:idxs[0]);
-                        for (int idx=0; idx<maxIdx; idx++) {
-                            int firstTri=triplets[firstRank][idx];
-                            int e=D0.getXorOf(tmptensor,groupTensor[firstTri]);
-                            if (e>=0) {
-                                int[] tris1=Arrays.copyOf(stris1,stris1.length+1);
-                                tris1[stris1.length]=firstTri;
-                                TESTER.testSolution(D0HELPER.tris(e),tris1);
-                            }
-                        }
+        for (int s=0; s<P0s.size(); s++) {
+            System.out.println("group # "+s);
+            List<int[]> P0=P0s.get(s), P1=P1s.get(s);
+            D0Set D0=new D0Set(P0); {
+                System.out.println("checking decomp<-->int conversion");
+                long st=System.currentTimeMillis(); final long[] mark={0};
+                int[] idx={0};
+                for (int[] p:P0) new ForEachSetOfProfile(p) { void process(int[] tris, int[] tensor) {
+                    long time=System.currentTimeMillis()-st;
+                    if (time>=mark[0]) {
+                        mark[0]+=10_000;
+                        System.out.printf("cnt=%d t=%d%n",idx[0],time);
                     }
-                };
+                    int[] generated=D0.tris(idx[0]); Arrays.sort(generated);
+                    int[] tmpTris=Arrays.copyOf(tris,tris.length); Arrays.sort(tmpTris);
+                    if (!Arrays.equals(tmpTris,generated)) throw new RuntimeException("tris="+Arrays.toString(tris)+" generated="+Arrays.toString(generated));
+                    idx[0]++;
+                }};
+                System.out.printf("cnt=%d t=%d m=%s%n",idx[0],System.currentTimeMillis()-st,memStats());
             }
-            System.out.printf(statsString,(D0.searches+searches0[0])/tot.doubleValue()*100,D0.searches/p1tot.doubleValue()*100,
-                    D0.searches,Arrays.toString(D0.filterPassed),D0.binSearches,D0.binWork,System.currentTimeMillis()-st,System.currentTimeMillis()-search_st,memStats());
-            searches0[0]+=D0.searches;
+            for (int pi=0; pi<P1.size(); pi++) {
+                int[] p1=P1.get(pi);
+                D0.searches=0; Arrays.fill(D0.filterPassed,0); D0.binSearches=0; D0.binWork=0;
+                BigInteger p1tot=PROFILECOST.cost(p1);
+                System.out.printf("%d/%d %s expected # searches=%d%n",pi,P1.size(),Arrays.toString(p1),p1tot);
+                int firstRank; {
+                    int tmp=-1;
+                    for (int r=0; r<=MAJOR_GROUP_SIZE; r++) if (p1[r]>0) { tmp=r; break; }
+                    firstRank=tmp;
+                }
+                long st=System.currentTimeMillis(); final long[] mark={0};
+                if (firstRank==-1) {
+                    int e=D0.getXorOf(CTARGET,new int[Gd32]);
+                    if (e>=0) TESTER.testSolution(D0.tris(e));
+                }
+                else {
+                    int[] subp1=Arrays.copyOf(p1,MAJOR_GROUP_SIZE+1);
+                    subp1[firstRank]--;
+                    long[] iters={0};
+                    new ForEachSetOfProfile(subp1) {
+                        void process(int[] stris1, int[] stensor1) {
+                            if ((iters[0]&127)==0) {
+                                long time=System.currentTimeMillis()-st;
+                                if (time>=mark[0]) {
+                                    if (mark[0]>0) System.out.printf(statsString,(D0.searches+searches0[0])/tot.doubleValue()*100,D0.searches/p1tot.doubleValue()*100,
+                                            D0.searches,Arrays.toString(D0.filterPassed),D0.binSearches,D0.binWork,time,System.currentTimeMillis()-search_st,memStats());
+                                    mark[0]+=(mark[0]<100_000?10_000:100_000);
+                                }
+                            }
+                            iters[0]++;
+                            if (!Arrays.equals($.tris2tensor(stris1),stensor1)) throw new RuntimeException();
+                            int[] tmptensor=xor(CTARGET,stensor1);
+                            int maxIdx=(idxs.length==0 || subp1[firstRank]==0?triplets[firstRank].length:idxs[0]);
+                            for (int idx=0; idx<maxIdx; idx++) {
+                                int firstTri=triplets[firstRank][idx];
+                                int e=D0.getXorOf(tmptensor,groupTensor[firstTri]);
+                                if (e>=0) {
+                                    int[] tris1=Arrays.copyOf(stris1,stris1.length+1);
+                                    tris1[stris1.length]=firstTri;
+                                    TESTER.testSolution(D0.tris(e),tris1);
+                                }
+                            }
+                        }
+                    };
+                }
+                System.out.printf(statsString,(D0.searches+searches0[0])/tot.doubleValue()*100,D0.searches/p1tot.doubleValue()*100,
+                        D0.searches,Arrays.toString(D0.filterPassed),D0.binSearches,D0.binWork,System.currentTimeMillis()-st,System.currentTimeMillis()-search_st,memStats());
+                searches0[0]+=D0.searches;
+            }
         }
         System.out.println("TOTAL TIME="+(System.currentTimeMillis()-START));
     }
