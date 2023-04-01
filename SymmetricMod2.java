@@ -1,754 +1,841 @@
 import java.math.BigInteger;
 import java.util.*;
 public class SymmetricMod2 {
-    private static long usedMem() {
-        Runtime r=Runtime.getRuntime();
-        return r.totalMemory()-r.freeMemory();
+    public static boolean DP_match(OrbitCollection ORBITINFO, int MAXR, int B) {
+        System.out.print("\tB="+B);
+        if (B>=32 || B>ORBITINFO.BITLEN) throw new RuntimeException();
+        //E(h,z)=1 if there is an orbit with tensor_valuation[:B]=h, rank=z; else 0
+        //E(h,0)=0 for all h
+        long dp_st=System.currentTimeMillis();
+        int[][] headsAt; {
+            boolean[][] exists=new boolean[MAXR+1][1<<B];
+            for (int oi=0; oi<ORBITINFO.NORBITS; oi++) {
+                int z=ORBITINFO.ORANKs[oi];
+                if (z<=MAXR) exists[z][ORBITINFO.ohead(oi,B)]=true;
+            }
+            headsAt=new int[MAXR+1][];
+            for (int z=1; z<=MAXR; z++) headsAt[z]=ArrayHelp.idxsAt(exists[z]);
+            System.out.printf(" head_hist=%s head_time=%d",ArrayHelp.inta2msetstr(ArrayHelp.lengths(headsAt)),System.currentTimeMillis()-dp_st);
+        }
+        int TARGET_HEAD=ORBITINFO.targethead(B);
+        boolean[][] dp=new boolean[MAXR+1][1<<B];
+        //dp[z][b]=(there exists a seq. of orbit idx.s Q s.t. sum_k OSIZEs[Q[k]] == z and (eltwise-xor)_k OVECs[Q[k]][:B] == b)
+        Arrays.fill(dp[0],false);
+        dp[0][0]=true;
+        System.out.print(" dp_hist=[");
+        if (dp[0][TARGET_HEAD]) {
+            System.out.println("] dp_time="+(System.currentTimeMillis()-dp_st));
+            return true;
+        }
+        System.out.print(1);
+        for (int z=1; z<=MAXR; z++) {
+            for (int lz=1; lz<=MAXR && lz<=z; lz++)
+                for (int lh:headsAt[lz]) if (dp[z-lz][TARGET_HEAD^lh]) {
+                    System.out.println("] dp_time="+(System.currentTimeMillis()-dp_st));
+                    return true;
+                }
+            Arrays.fill(dp[z],false);
+            for (int z0=0; z0<z; z0++)
+                for (int h0=0; h0<(1<<B); h0++) if (dp[z0][h0])
+                    for (int h1:headsAt[z-z0])
+                        dp[z][h0^h1]=true;
+            if (dp[z][TARGET_HEAD]) throw new RuntimeException();
+            int cnt=0; for (boolean b:dp[z]) if (b) cnt++;
+            System.out.print(","+cnt);
+        }
+        System.out.println("] dp_time="+(System.currentTimeMillis()-dp_st));
+        return false;
     }
-    private static String memStats() {
-        return String.format("(tot=%d,used=%d)",Runtime.getRuntime().totalMemory(),usedMem());
+    public static int[][] MITM_search(OrbitCollection ORBITINFO, int MAXR, int MEM_LIMIT, long RUN_LIMIT) {
+        long TOTST=System.currentTimeMillis();
+        System.out.println("searching for MAXR="+MAXR);
+
+        System.out.println("finding MITM scheme");
+        ProfileManagement.MITM mitm; {
+            ProfileManagement.MITMCalculator MITM_CALC=new ProfileManagement.MITMCalculator(ORBITINFO.CANONICAL_ORANKHIST,MAXR,MEM_LIMIT);
+            System.out.println("#profiles="+MITM_CALC.PROFILES.length);
+            mitm=MITM_CALC.hill_climb(5000);
+            System.out.printf("MITM:%n\tmemset=%s%n\titerset=%s%n",ArrayHelp.intaa2str(mitm.memPs),ArrayHelp.intaa2str(mitm.iterPs));
+            MITM_CALC.checkMITM(mitm);
+            System.out.printf("~~~ totcost=%d totmemcost=%d%n",mitm.totcost,mitm.memcost);
+        }
+        if (mitm.totcost.compareTo(new BigInteger(""+RUN_LIMIT))>0) {
+            System.out.println("TOO EXPENSIVE: EXITING");
+            return null;
+        }
+
+        System.out.println("memoization");
+        Deck mem; {
+            long mem_st=System.currentTimeMillis();
+            List<int[]> stem_cards=new ArrayList<>();
+            List<int[]> stem_vecs=new ArrayList<>();
+            List<Integer> stem_ranks=new ArrayList<>();
+            long[] leaves=new long[(int)mitm.memcost.longValue()]; Arrays.fill(leaves,CardParser.NOT_A_PAIR);
+            int[] leaf_idx={0};
+            for (int[] P:mitm.memPs) {
+                new CardDFS(ORBITINFO,P) {
+                    void process_stem(int[] stem) {
+                        int[] s_card=stem_card();
+                        stem_cards.add(s_card);
+                        stem_vecs.add(Arrays.copyOf(stem,ORBITINFO.WORDLEN));
+                        stem_ranks.add(ORBITINFO.rank(s_card));
+                    }
+                    void process(int[] stem, int oi) {
+                        leaves[leaf_idx[0]++]=oi==OrbitCollection.NOT_ORBITIDX?CardParser.EMPTY_PAIR:( (stem_cards.size()-1)*(long)ORBITINFO.NORBITS+oi );
+                    }
+                };
+            }
+            if (leaf_idx[0]!=leaves.length) throw new RuntimeException();
+            for (long leaf:leaves) if (leaf<0 && leaf!=CardParser.EMPTY_PAIR) throw new RuntimeException();
+            System.out.printf("~~~ #stems=%d collect_time=%d%n",stem_cards.size(),System.currentTimeMillis()-mem_st);
+
+            mem=new Deck(ORBITINFO.BITLEN,leaves,
+                    new CardParser(ORBITINFO.WORDLEN) {
+                        private int last_oi(long leaf) { if (leaf==CardParser.EMPTY_PAIR) throw new RuntimeException(); else return (int)(leaf%ORBITINFO.NORBITS); }
+                        private int stemi(long leaf) { if (leaf==CardParser.EMPTY_PAIR) throw new RuntimeException(); else return (int)(leaf/ORBITINFO.NORBITS); }
+                        public int _word(long leaf, int w) { return stem_vecs.get(stemi(leaf))[w] ^ ORBITINFO.oword(last_oi(leaf),w); }
+                        public int[] _card(long leaf) {
+                            int[] s_c=stem_cards.get(stemi(leaf));
+                            int[] out=Arrays.copyOf(s_c,s_c.length+1); out[s_c.length]=last_oi(leaf);
+                            return out;
+                        }
+                        public int _rank(long leaf) { return stem_ranks.get(stemi(leaf))+ORBITINFO.ORANKs[last_oi(leaf)]; }
+                    },
+                    true
+            );
+            System.out.printf("~~~ #canonical_mem_cards=%d mem_time=%d%n",mem.ps.length,System.currentTimeMillis()-mem_st);
+            mem.check(ORBITINFO);
+        }
+
+        long iter_st=System.currentTimeMillis();
+        List<int[]> sols=new ArrayList<>();
+        for (int[] P:mitm.iterPs) {
+            long pcost=ProfileManagement.profileCost(ORBITINFO.CANONICAL_ORANKHIST,P).longValue();
+            System.out.printf("P=%s size=%d%n",ArrayHelp.inta2str(P),pcost);
+            Arrays.fill(mem.nfailedat,0); mem.ntough=0;
+            Logger L$=new Logger() {
+                public String extra_info() {
+                    return String.format("nfailedat=%s ntough=%d",Arrays.toString(mem.nfailedat).replace(" ",""),mem.ntough);
+                }
+            };
+            new CardDFS(ORBITINFO,P,ORBITINFO.TARGETVEC) {
+                void process_stem(int[] stem) {}
+                void process(int[] stem, int oi) {
+                    L$.incr_work();
+                    long p=mem.get(stem,ORBITINFO,oi);
+                    if (p!=CardParser.NOT_A_PAIR) {
+                        List<Integer> sol=ORBITINFO.reps(mem.code_parser.card(p),card());
+                        System.out.println("\tsol "+sol);
+                        sols.add(ArrayHelp.list2arr(sol));
+                    }
+                }
+            };
+            L$.log();
+            if (L$.work!=pcost) throw new RuntimeException();
+        }
+        System.out.printf("~~~ iter_time=%d%n",System.currentTimeMillis()-iter_st);
+        return sols.toArray(new int[0][]);
     }
-    private static int[] toArr(List<Integer> L) {
-        int[] A=new int[L.size()];
-        for (int i=0; i<A.length; i++) A[i]=L.get(i);
+    public static void main(String[] args) {
+        long _st=System.currentTimeMillis();
+        int N=3, MAXR=23, MAXB=25, MEM_LIMIT=500_000_000; long RUN_LIMIT=500_000_000_000L;
+        System.out.printf("N=%d MAXR=%d MAXB=%d MEM_LIMIT=%d RUN_LIMIT=%d%n",N,MAXR,MAXB,MEM_LIMIT,RUN_LIMIT);
+        for (String symm_set:args) {
+            long st=System.currentTimeMillis();
+            OrbitCollection ORBITINFO=new OrbitCollection(N,symm_set);
+            int minB=-1; {
+                System.out.println("prefix DP:");
+                long dp_st=System.currentTimeMillis();
+                for (int B=1; B<=MAXB && B<=ORBITINFO.BITLEN && minB==-1; B++)
+                    if (!DP_match(ORBITINFO,MAXR,B)) minB=B;
+                System.out.printf("~~~ minB=%s dp_time=%d%n",minB==-1?"?":(""+minB),System.currentTimeMillis()-dp_st);
+            }
+            if (minB==-1) {
+                //repeatedly decrease R if needed so that search becomes feasible;
+                // then do search for R, and then also do search for R-1 (if R>=1) before stopping
+                boolean result_known=false;
+                for (int R=MAXR; R>=1; R--) {
+                    int[][] sols=MITM_search(ORBITINFO,R,MEM_LIMIT,RUN_LIMIT);
+                    if (sols!=null) System.out.printf("~~~ SOLS%d=%s%n",R,ArrayHelp.intaa2str(sols));
+                    if (result_known) break;
+                    if (sols!=null) result_known=true;
+                }
+            }
+            else System.out.printf("~~~ SOLS%d=%n",MAXR);
+            System.out.printf("~~~ tot_time=%d%n",System.currentTimeMillis()-st);
+        }
+        System.out.println("TOTAL_TIME="+(System.currentTimeMillis()-_st));
+    }
+}
+
+class ArrayHelp {
+    public static String inta2str(int[] A) { return Arrays.toString(A).replace(" ",""); }
+    public static String intaa2str(int[][] A) {
+        StringBuilder s=new StringBuilder();
+        for (int i=0; i<A.length; i++) s.append(i>0?";":"").append(inta2str(A[i]));
+        return s.toString();
+    }
+    public static String inta2msetstr(int[] A) {
+        StringBuilder s=new StringBuilder();
+        for (int k=0; k<A.length; k++) if (A[k]>0)
+            s.append(s.length()>0?",":"").append(k).append(":").append(A[k]);
+        return "{"+s+"}";
+    }
+    public static int[] range(int n) {
+        int[] out=new int[n]; for (int i=0; i<n; i++) out[i]=i;
+        return out;
+    }
+    public static int[] list2arr(List<Integer> L) {
+        int[] A=new int[L.size()]; for (int i=0; i<A.length; i++) A[i]=L.get(i);
         return A;
     }
-    private static int[] listSum(int[] A, int[] B) {
+    public static String bitvec2str(int[] vec, int F) {
+        StringBuilder s=new StringBuilder();
+        for (int f=0; f<F; f++) s.append((vec[f/32]>>>(f%32))&1);
+        return s.toString();
+    }
+    public static int[] lengths(int[][] Ls) {
+        int[] out=new int[Ls.length];
+        for (int i=0; i<Ls.length; i++) out[i]=Ls[i]==null?0:Ls[i].length;
+        return out;
+    }
+    public static int[] idxsAt(boolean[] B) {
+        int cnt=0; for (boolean b:B) if (b) cnt++;
+        int[] out=new int[cnt];
+        for (int i=0, idx=0; i<B.length; i++)
+            if (B[i]) out[idx++]=i;
+        return out;
+    }
+}
+abstract class Logger {
+    long st, mark, work;
+    public Logger() {
+        st=System.currentTimeMillis(); mark=0; work=0;
+    }
+    public abstract String extra_info();
+    public void log() {
+        System.out.printf("\tt=%d work=%d %s%n",System.currentTimeMillis()-st,work,extra_info());
+    }
+    private void time_log() {
+        long tm=System.currentTimeMillis()-st;
+        if (tm>=mark) {
+            if (mark>0) log();
+            while (tm>=mark) mark+=mark<100_000?10_000:mark<1000_000?100_000:1000_000;
+        }
+    }
+    public void incr_work() {
+        if (work%128==0) time_log();
+        work++;
+    }
+}
+
+class MatrixHelp {
+    public static int bit(int n, int b) { return (n>>>b)&1; }
+    public static int[][] transpose(int[][] A) {
+        int[][] out=new int[A[0].length][A.length];
+        for (int i=0; i<A.length; i++) for (int j=0; j<A[0].length; j++)
+            out[j][i]=A[i][j];
+        return out;
+    }
+    private static int[] nullspaceFrees(int[][] A) {
+        int R=A.length, C=A[0].length;
+        //compute (column-reversed) row echelon form
+        List<int[]> leadingElems=new ArrayList<>();
+        for (int r0=0, j=C-1; j>=0; j--) {
+            int r=r0;
+            while (r<R && A[r][j]==0) r++;
+            if (r<R) {
+                int[] Ar=Arrays.copyOf(A[r],C), Ar0=Arrays.copyOf(A[r0],C);
+                A[r]=Ar0; A[r0]=Ar;
+                if (A[r0][j]==0) throw new RuntimeException();
+                for (int r1=r0+1; r1<R; r1++) if (A[r1][j]==1)
+                    for (int c=0; c<C; c++)
+                        A[r1][c]^=A[r0][c];
+                leadingElems.add(new int[] {r0,j});
+                r0++;
+            }
+        }
+        //return free variables
+        boolean[] free=new boolean[C]; Arrays.fill(free,true);
+        for (int[] e:leadingElems) free[e[1]]=false;
+        return ArrayHelp.idxsAt(free);
+    }
+
+    int N, N2, N4, N6, NMATS, MATMASK, NTRIPLETS;
+    private int[][] PROD;
+    private int[] TRANSPOSED, INV;
+    public int mat2code(int[][] M) {
+        int out=0;
+        for (int i=0; i<N2; i++) out|=M[i/N][i%N]<<i;
+        return out;
+    }
+    public int[][] code2mat(int v) {
+        int[][] out=new int[N][N];
+        for (int i=0; i<N2; i++) out[i/N][i%N]=bit(v,i);
+        return out;
+    }
+    private int[][] binprod(int[][] A, int[][] B) {
+        int[][] C=new int[N][N];
+        for (int i=0; i<N; i++) for (int j=0; j<N; j++) for (int k=0; k<N; k++)
+            C[i][k]^=A[i][j]&B[j][k];
+        return C;
+    }
+    private int matstr2code(String s) {
+        if (s.length()!=N2) throw new RuntimeException();
+        int out=0;
+        for (int i=0; i<N2; i++) {
+            int v=s.charAt(i)-'0'; if (v<0 || v>1) throw new RuntimeException();
+            out|=v<<i;
+        }
+        return out;
+    }
+    public MatrixHelp(int N) {
+        this.N=N; N2=N*N; N4=N2*N2; N6=N4*N2;
+        NMATS=1<<N2; MATMASK=(1<<N2)-1; NTRIPLETS=NMATS*NMATS*NMATS;
+        TRANSPOSED=new int[NMATS];
+        int[][][] mats=new int[NMATS][][];
+        for (int c=0; c<NMATS; c++) {
+            mats[c]=code2mat(c);
+            TRANSPOSED[c]=mat2code(transpose(mats[c]));
+        }
+        PROD=new int[NMATS][NMATS];
+        INV=new int[NMATS]; Arrays.fill(INV,-1);
+        int cI=0; for (int r=0; r<N; r++) cI|=1<<(r*N+r);
+        for (int ca=0; ca<NMATS; ca++) for (int cb=0; cb<NMATS; cb++) {
+            PROD[ca][cb]=mat2code(binprod(mats[ca],mats[cb]));
+            if (PROD[ca][cb]==cI) INV[ca]=cb;
+        }
+    }
+    public int mats2tri(int a, int b, int c) { return a|(b<<N2)|(c<<(N2*2)); }
+    public int tri2matA(int tri) { return tri&MATMASK; }
+    public int tri2matB(int tri) { return (tri>>>N2)&MATMASK; }
+    public int tri2matC(int tri) { return (tri>>>(2*N2))&MATMASK; }
+    public int[] tri2vectensor(int tri) {
+        int a=tri2matA(tri), b=tri2matB(tri), c=tri2matC(tri);
+        int[] out=new int[N6];
+        for (int i=0; i<N2; i++) if (bit(a,i)==1)
+            for (int j=0; j<N2; j++) if (bit(b,j)==1)
+                for (int k=0; k<N2; k++) if (bit(c,k)==1)
+                    out[i*N4+j*N2+k]=1;
+        return out;
+    }
+    public int[] tris2tensortubes(List<Integer> tris) {
+        int[] tubes=new int[N4];
+        for (int tri:tris) {
+            int na=tri2matA(tri), nb=tri2matB(tri), nc=tri2matC(tri);
+            for (int i=0; i<N2; i++) if (bit(na,i)==1)
+                for (int j=0; j<N2; j++)
+                    tubes[i*N2+j]^=bit(nb,j)*nc;
+        }
+        return tubes;
+    }
+    public int tensortubes2elem(int[] ttubes, int i) {
+        return bit(ttubes[i/N2],i%N2);
+    }
+    public int[] compressed(int[] ttubes, int[] idxs) {
+        int F=idxs.length, W=(F-1)/32+1;
+        int[] out=new int[W];
+        for (int f=0; f<F; f++) out[f/32]|=tensortubes2elem(ttubes,idxs[f])<<(f%32);
+        return out;
+    }
+
+    public static int CYC_CODE=-1, TP_CODE=-2;
+    public int[] funcstr2funcarr(String tstr) {
+        if (tstr.equals("id")) return new int[] {};
+        String[] strs=tstr.split("@");
+        int[] out=new int[strs.length];
+        for (int i=0; i<strs.length; i++) {
+            String str=strs[i];
+            if (str.equals("cyc")) out[i]=CYC_CODE;
+            else if (str.equals("tp")) out[i]=TP_CODE;
+            else {
+                if (!str.startsWith("tr")) throw new RuntimeException();
+                String[] ss=str.substring(2).split("-");
+                if (ss.length==3) out[i]=mats2tri(matstr2code(ss[0]),matstr2code(ss[1]),matstr2code(ss[2]));
+                else throw new RuntimeException();
+            }
+        }
+        return out;
+    }
+    public int transformedTriplet(int[] funcs, int tri0) {
+        int tri=tri0;
+        for (int i=funcs.length-1; i>=0; i--) {
+            int f=funcs[i];
+            int a=tri2matA(tri), b=tri2matB(tri), c=tri2matC(tri);
+            if (f==CYC_CODE) tri=mats2tri(b,c,a);
+            else if (f==TP_CODE) tri=mats2tri(TRANSPOSED[c],TRANSPOSED[b],TRANSPOSED[a]);
+            else {
+                int x=tri2matA(f), y=tri2matB(f), z=tri2matC(f);
+                tri=mats2tri(PROD[PROD[x][a]][INV[y]],PROD[PROD[y][b]][INV[z]],PROD[PROD[z][c]][INV[x]]);
+            }
+        }
+        return tri;
+    }
+    public int[] freeIdxs(int[][] FUNC_CHAINS) {
+        List<int[]> M_null=new ArrayList<>();
+        for (int[] fc:FUNC_CHAINS) {
+            int[][] M=new int[N6][];
+            //here, store a N2xN2xN2 tensor T with A s.t. T[a,b,c]=A[a*N4+b*N2+c]
+            for (int i=0; i<N2; i++) for (int j=0; j<N2; j++) for (int k=0; k<N2; k++)
+                M[i*N4+j*N2+k]=tri2vectensor(transformedTriplet(fc,mats2tri(1<<i,1<<j,1<<k)));
+            M=MatrixHelp.transpose(M);
+            for (int r=0; r<N6; r++) M[r][r]^=1;
+            for (int[] row:M) M_null.add(row);
+        }
+        return M_null.size()==0?ArrayHelp.range(N6):nullspaceFrees(M_null.toArray(new int[0][]));
+    }
+}
+class OrbitCollection {
+    public static final int NOT_ORBITIDX=-1;
+    int BITLEN, WORDLEN, RANK_BOUND;
+    int[][] OVECs;
+    int[] OREPs, ORANKs;
+    int NORBITS;
+    int[] TARGETVEC;
+    int[] CANONICAL_ORANKHIST; int[][] CANONICAL_ORBITS_BY_SIZE;
+    private static int lowestBits(int x,int b) { if (b>32) throw new RuntimeException(); if (b==32) return x; return x&((1<<b)-1); }
+    public int oword(int oi, int w) { return OVECs[oi][w]; }
+    public int ohead(int oi, int b) { return lowestBits(oword(oi,0),b); }
+    public int targethead(int b) { return lowestBits(TARGETVEC[0],b); }
+    public int xorword(int[] stem, int oi, int w) { if (oi==NOT_ORBITIDX) return stem[w]; return stem[w]^oword(oi,w); }
+    public int[] xorvec(int[] stem, int oi) {
+        int[] out=new int[WORDLEN];
+        for (int w=0; w<WORDLEN; w++) out[w]=xorword(stem,oi,w);
+        return out;
+    }
+    public int[] vec(int[] card) {
+        int[] out=new int[WORDLEN];
+        for (int oi:card)
+            for (int w=0; w<WORDLEN; w++)
+                out[w]^=oword(oi,w);
+        return out;
+    }
+    public int rank(int[] card) {
+        int out=0;
+        for (int oi:card) out+=ORANKs[oi];
+        return out;
+    }
+    public List<Integer> reps(int[]... cards) {
+        List<Integer> reps=new ArrayList<>();
+        for (int[] card:cards) for (int oi:card) reps.add(OREPs[oi]);
+        return reps;
+    }
+    public OrbitCollection(int N, String SYMM_SET) {
+        MatrixHelp $=new MatrixHelp(N);
+        if (3*$.N2>32) throw new RuntimeException("Too many bits in a triplet of NxN matrices to fit in a 32-bit int");
+        System.out.printf("@@@ transforms=%s%ngenerating matrix triplet orbits:%n",SYMM_SET);
+        String[] TRANSFORMS=SYMM_SET.split(",");
+        int[][] FUNC_CHAINS=new int[TRANSFORMS.length][]; for (int i=0; i<TRANSFORMS.length; i++) FUNC_CHAINS[i]=$.funcstr2funcarr(TRANSFORMS[i]);
+        int[] frees=$.freeIdxs(FUNC_CHAINS);
+        System.out.printf("\t#free_idxs=%d free_idxs=%s",frees.length,ArrayHelp.inta2str(frees));
+        BITLEN=frees.length; WORDLEN=(BITLEN-1)/32+1;
+        //"tube storage": store a N2xN2xN2 tensor T as A s.t. T[a,b,c]=the c-th bit of A[a*N2+b]
+        {
+            int[] MMT=new int[$.N4];
+            for (int i=0; i<N; i++) for (int j=0; j<N; j++) for (int k=0; k<N; k++) MMT[(i*N+j)*$.N2+(j*N+k)]^=1<<(k*N+i);
+            TARGETVEC=$.compressed(MMT,frees);
+            if (TARGETVEC.length!=WORDLEN) throw new RuntimeException();
+            System.out.println("\tcompressed(MMT)="+ArrayHelp.bitvec2str(TARGETVEC,BITLEN));
+        }
+        List<Integer> reps=new ArrayList<>(), ranks=new ArrayList<>(); List<int[]> vecs=new ArrayList<>();
+        { //calculate compressed tensors
+            boolean[] seen=new boolean[$.NTRIPLETS];
+            int[] nprocessed={0};
+            Logger L$=new Logger() {
+                public String extra_info() { return String.format("#processed=%d",nprocessed[0]); }
+            };
+            for (int rep=0; rep<$.NTRIPLETS; rep++)
+                if (!seen[rep]) {
+                    L$.incr_work();
+                    List<Integer> orbit=new ArrayList<>(); //BFS over all possible transformed versions of the triplet
+                    orbit.add(rep); seen[rep]=true;
+                    for (int i=0; i<orbit.size(); i++) {
+                        int tri=orbit.get(i);
+                        for (int[] fc:FUNC_CHAINS) {
+                            int ntri=$.transformedTriplet(fc,tri);
+                            if (!seen[ntri]) {
+                                orbit.add(ntri); seen[ntri]=true;
+                            }
+                        }
+                    }
+                    int sz=orbit.size();
+                    nprocessed[0]+=sz;
+                    reps.add(rep);
+                    int[] vec=$.compressed($.tris2tensortubes(orbit),frees);
+                    if (vec.length!= WORDLEN) throw new RuntimeException();
+                    vecs.add(vec);
+                    ranks.add(sz);
+                }
+            L$.log();
+            RANK_BOUND=0; for (int r:ranks) RANK_BOUND=Math.max(RANK_BOUND,r);
+            RANK_BOUND++;
+        }
+        OREPs=ArrayHelp.list2arr(reps); OVECs=vecs.toArray(new int[0][]); ORANKs=ArrayHelp.list2arr(ranks);
+        NORBITS=OREPs.length;
+        int[] hist=new int[RANK_BOUND]; for (int r:ORANKs) hist[r]++;
+        System.out.println("~~~ orbit_rank_histogram="+ArrayHelp.inta2msetstr(hist));
+
+        System.out.println("simple orbit elimination:");
+        long st=System.currentTimeMillis();
+        CardParser singletonCardParser=new CardParser(WORDLEN) {
+            public int _word(long oi, int w) { return oword((int)oi,w); }
+            public int[] _card(long oi) { return new int[] {(int)oi}; }
+            public int _rank(long oi) { return ORANKs[(int)oi]; }
+        };
+        Deck singleOrbits; {
+            long[] ois=new long[NORBITS+1]; for (int i=0; i<NORBITS; i++) ois[i]=i;
+            ois[NORBITS]=CardParser.EMPTY_PAIR;
+            singleOrbits=new Deck(BITLEN,ois,singletonCardParser,false);
+        }
+        List<List<Integer>> groupedOis=new ArrayList<>(); for (int z = 0; z< RANK_BOUND; z++) groupedOis.add(new ArrayList<>());
+        for (long p:singleOrbits.ps) if (p!=CardParser.EMPTY_PAIR) {
+            int oi=(int)p;
+            groupedOis.get(ORANKs[oi]).add(oi);
+        }
+        CANONICAL_ORBITS_BY_SIZE=new int[RANK_BOUND][];
+        for (int z = 1; z< RANK_BOUND; z++)
+            CANONICAL_ORBITS_BY_SIZE[z]=ArrayHelp.list2arr(groupedOis.get(z));
+        CANONICAL_ORANKHIST=ArrayHelp.lengths(CANONICAL_ORBITS_BY_SIZE);
+        System.out.printf("~~~ canonical_orbit_rank_histogram=%s canonical_time=%d%n",
+                ArrayHelp.inta2msetstr(CANONICAL_ORANKHIST),System.currentTimeMillis()-st);
+    }
+}
+
+class ProfileManagement {
+    public static List<int[]> profiles(int[] H, int MAXR) {
+        List<int[]> out=new ArrayList<>();
+        class DFS {
+            int[] profile=new int[H.length];
+            public void dfs(int k, int r) {
+                if (k==H.length) {
+                    out.add(Arrays.copyOf(profile,H.length));
+                    return;
+                }
+                for (int h=0; r+k*h<=MAXR && h<=H[k]; h++) {
+                    profile[k]=h;
+                    dfs(k+1,r+k*h);
+                }
+            }
+        } new DFS().dfs(0,0);
+        return out;
+    }
+    public static int[] eltsum(int[] A, int[] B) {
         if (A.length!=B.length) throw new RuntimeException();
         int[] C=new int[A.length];
         for (int i=0; i<A.length; i++) C[i]=A[i]+B[i];
         return C;
     }
-
-    static long ncombos(int n, int k) {
-        if (n<k) return 0;
-        long out=1;
-        for (int i=n; i>n-k; i--) out*=i;
-        for (int i=1; i<=k; i++) out/=i;
+    public static BigInteger nCr(int n, int k) {
+        BigInteger out=BigInteger.ONE;
+        for (int i=0; i<k; i++) out=out.multiply(new BigInteger(""+(n-i)));
+        for (int i=1; i<=k; i++) out=out.divide(new BigInteger(""+i));
         return out;
     }
-    static int[] idx2combo(int N, int K, long idx) {
-        if (idx<0 || idx>=ncombos(N,K)) return null;
-        int[] out=new int[K];
-        for (int ki=0; ki<K; ki++) {
-            int k=K-ki, l=ki==0?0:out[ki-1]+1;
-            long tot=ncombos(N-l,k), F=tot-idx;
-            //find smallest n s.t. ncombos(n,k)>=F
-            //(n-k)^k/(k!) <= ncombos(n,k) <= n^k/(k!)
-            //--> optimal n between floor( (f*k!)^(1/k) ) and ceil( (f*k!)^(1/k)+k )
-            int kfac=1; for (int i=1; i<=k; i++) kfac*=i;
-            double approx=Math.pow(F*kfac,1.0/k);
-            int lo=Math.max(1,(int)approx), hi=Math.min(N-l,(int)Math.ceil(approx)+k);
-            while (lo<hi) {
-                int mi=(lo+hi)/2;
-                if (ncombos(mi,k)<F) lo=mi+1;
-                else hi=mi;
-            }
-            out[ki]=N-lo;
-            idx-=tot-ncombos(lo,k);
-        }
+    public static BigInteger profileCost(int[] H, int[] P) {
+        if (H.length!=P.length) throw new RuntimeException();
+        BigInteger out=BigInteger.ONE;
+        for (int i=0; i<H.length; i++) out=out.multiply(nCr(H[i],P[i]));
         return out;
     }
-
-    //matrix A is stored as number b s.t. A[i][j]=i*N+j -th bit of b
-    //tensor T is stored as array t s.t. T[i][j][k]=k -th bit of t[i*N2+j]
-    private static int N, N2, N4, N6;
-    private static int MASK;
-    private static int NPERMS, MAJOR_GROUP_SIZE;
-    private static int[][] permutedMats;
-    //over mod 2, a+b =a bitwise_xor b =a^b and a*b =a bitwise_and b =a&b
-    private static int[] xor(int[] A, int[] B) {
-        if (A.length!=B.length) throw new RuntimeException();
-        int[] C=new int[A.length];
-        for (int i=0; i<A.length; i++) C[i]=A[i]^B[i];
-        return C;
+    public static class MITM {
+        int[][] memPs, iterPs;
+        BigInteger memcost, totcost;
+        public MITM(int[][] memPs, int[][] iterPs, BigInteger memcost, BigInteger totcost) {
+            this.memPs=memPs; this.iterPs=iterPs; this.memcost=memcost; this.totcost=totcost;
+        }
+        public String stat() {
+            return "("+totcost+","+memcost+")";
+        }
     }
-    private static int[] xortensor(int[] triplets) {
-        int[] out=new int[N4];
-        for (int tri:triplets) {
-            int A=tri&MASK, B=(tri>>N2)&MASK, C=(tri>>(2*N2))&MASK;
-            for (int i=0; i<N2; i++) if (((A>>i)&1)==1)
-                for (int j=0; j<N2; j++) if (((B>>j)&1)==1)
-                    out[i*N2+j]^=C;
+    public static class MITMCalculator {
+        int NP, K;
+        int[][] PROFILES;
+        Map<String,Integer> PROFILE2IDX;
+        List<List<int[]>> PRODPAIRS;
+        BigInteger[] COSTS;
+        BigInteger mem_limit;
+        public int profile2idx(int[] P) {
+            return PROFILE2IDX.getOrDefault(Arrays.toString(P),-1);
         }
-        return out;
-    }
+        public MITMCalculator(int[] H, int MAXR, int mem_limit) {
+            K=H.length; this.mem_limit=new BigInteger(""+mem_limit);
+            PROFILES=profiles(H,MAXR).toArray(new int[0][]); NP=PROFILES.length;
+            PROFILE2IDX=new HashMap<>(); for (int pi=0; pi<NP; pi++) PROFILE2IDX.put(Arrays.toString(PROFILES[pi]),pi);
 
-    private static int[] transformedTris(int xc, int yc, int zc) {
-        int[] out=new int[MAJOR_GROUP_SIZE]; int i=0;
-        for (int[] F:permutedMats) for (int[] tri:new int[][] {{xc,yc,zc},{yc,zc,xc},{zc,xc,yc}})
-            out[i++]=F[tri[0]]|(F[tri[1]]<<N2)|(F[tri[2]]<<(2*N2));
-        return out;
-    }
-
-    private static int G, Gd32;
-    private static int[][] compressionClasses;
-    private static int[] symmCompress(int[] T) {
-        int[] out=new int[Gd32];
-        for (int g=0; g<G; g++) {
-            int[] group=compressionClasses[g];
-            int v=(T[group[0]/N2]>>(group[0]%N2))&1;
-            for (int i:group) if (v!=((T[i/N2]>>(i%N2))&1)) throw new RuntimeException("Tensor not symmetric enough for compression.");
-            out[g>>>5]|=((long)v)<<(g&31);
+            COSTS=new BigInteger[NP];
+            for (int pi=0; pi<NP; pi++) COSTS[pi]=profileCost(H,PROFILES[pi]);
+            PRODPAIRS=new ArrayList<>(); for (int pi=0; pi<NP; pi++) PRODPAIRS.add(new ArrayList<>());
+            for (int pa=0; pa<NP; pa++)
+                if (COSTS[pa].compareTo(this.mem_limit)<=0)
+                    for (int pb=0; pb<NP; pb++) {
+                        int pi=profile2idx(eltsum(PROFILES[pa],PROFILES[pb]));
+                        if (pi>=0) PRODPAIRS.get(pi).add(new int[] {pa,pb});
+                    }
         }
-        return out;
-    }
-
-    static class BeamSearch {
-        int[][] A; BigInteger[] C;
-        int N, S;
-        BigInteger cost(boolean[] set) {
-            BigInteger out=BigInteger.ZERO;
-            for (int c=0; c<N; c++) if (set[c]) out=out.add(C[c]);
-            return out;
+        public MITM convert(Set<Integer> mS, Set<Integer> iS) {
+            BigInteger totm=BigInteger.ZERO; for (int pi:mS) totm=totm.add(COSTS[pi]);
+            BigInteger tot=totm; for (int pi:iS) tot=tot.add(COSTS[pi]);
+            List<int[]> mPs=new ArrayList<>(), iPs=new ArrayList<>();
+            for (int pi:mS) mPs.add(PROFILES[pi]);
+            for (int pi:iS) iPs.add(PROFILES[pi]);
+            return new MITM(mPs.toArray(new int[0][]),iPs.toArray(new int[0][]),totm,tot);
         }
-        BigInteger scr(boolean[][][] minors) {
-            BigInteger out=BigInteger.ZERO;
-            for (boolean[][] minor:minors)
-                out=out.add(cost(minor[0])).add(cost(minor[1]));
-            return out;
+        public MITM greedy(int[] ord) {
+            Set<Integer> mS=new HashSet<>(), iS=new HashSet<>(); BigInteger totm=BigInteger.ZERO;
+            for (int i:ord) {
+                BigInteger bscr=null; int[] bpair=null;
+                for (int[] pair:PRODPAIRS.get(i)) {
+                    BigInteger dmem=mS.contains(pair[0])?BigInteger.ZERO:COSTS[pair[0]];
+                    if ((totm.add(dmem)).compareTo(mem_limit)<=0) {
+                        BigInteger scr=dmem.add(iS.contains(pair[1])?BigInteger.ZERO:COSTS[pair[1]]);
+                        if (bscr==null || scr.compareTo(bscr)<0) {
+                            bscr=scr;
+                            bpair=pair;
+                        }
+                    }
+                }
+                if (bpair==null) return null;//throw new RuntimeException(i+" "+totm);
+                if (!mS.contains(bpair[0])) totm=totm.add(COSTS[bpair[0]]);
+                mS.add(bpair[0]);
+                iS.add(bpair[1]);
+            }
+            return convert(mS,iS);
         }
-        boolean[][][] bminors; BigInteger bscr;
-        class Sol implements Comparable<Sol> {
-            boolean[][][] minors;
-            BigInteger scr;
-            Sol() {
-                minors=new boolean[S][2][N];
-                scr=BigInteger.ZERO;
-            }
-            boolean contains(int v) {
-                for (boolean[][] minor:minors)
-                    for (int r=0; r<N; r++) if (minor[0][r])
-                        for (int c=0; c<N; c++) if (minor[1][c])
-                            if (A[r][c]==v) return true;
-                return false;
-            }
-            Sol add(int[] l, int g) {
-                boolean[][][] nminors=new boolean[S][][];
-                for (int s=0; s<S; s++) nminors[s]=new boolean[][] {Arrays.copyOf(minors[s][0],N),Arrays.copyOf(minors[s][1],N)};
-                nminors[g][0][l[0]]=true;
-                nminors[g][1][l[1]]=true;
-                BigInteger nscr=scr.add(minors[g][0][l[0]]?BigInteger.ZERO:C[l[0]]).add(minors[g][1][l[1]]?BigInteger.ZERO:C[l[1]]);
-                Sol out=new Sol();
-                out.minors=nminors;
-                out.scr=nscr;
-                return out;
-            }
-            public int compareTo(Sol s) {
-                return scr.compareTo(s.scr);
-            }
-        }
-        class Mod implements Comparable<Mod> {
-            int[] l; int g, i;
-            BigInteger scr;
-            Mod(int[] l, int g, int i, BigInteger scr) {
-                this.l=l; this.g=g; this.i=i; this.scr=scr;
-            }
-            public int compareTo(Mod o) {
-                return scr.compareTo(o.scr);
-            }
-        }
-        BeamSearch(int[][] A, BigInteger[] C, int S, BigInteger MAXTOTROW) {
-            N=A.length;
-            this.A=A; this.C=C; this.S=S;
-            List<List<int[]>> locs=new ArrayList<>();
-            for (int i=0; i<N; i++) locs.add(new ArrayList<>());
-            for (int r=0; r<N; r++) if (C[r].compareTo(MAXTOTROW)<=0) for (int c=0; c<N; c++) if (A[r][c]>-1)
-                locs.get(A[r][c]).add(new int[] {r,c});
-
+        public MITM hill_climb(long REPS) {
             long st=System.currentTimeMillis();
-            List<Sol> sols=new ArrayList<>(Collections.singletonList(new Sol()));
-            int BEAMLIM=10000;
-            for (int v=N-1; v>-1; v--) { //for some reason, going backwards produces a much better result than going forwards
-                List<Mod> mods=new ArrayList<>();
-                for (int i=0; i<sols.size(); i++) {
-                    Sol sol=sols.get(i);
-                    if (sol.contains(v)) mods.add(new Mod(null,-1,i,sol.scr));
-                    else {
-                        for (int[] l:locs.get(v)) {
-                            for (int g=0; g<S; g++) {
-                                BigInteger nscr=sol.scr.add(sol.minors[g][0][l[0]]?BigInteger.ZERO:C[l[0]])
-                                        .add(sol.minors[g][1][l[1]]?BigInteger.ZERO:C[l[1]]);
-                                boolean[] minorr=sol.minors[g][0];
-                                if (minorr[l[0]] || (cost(minorr).add(C[l[0]])).compareTo(MAXTOTROW)<=0)
-                                    mods.add(new Mod(l,g,i,nscr));
-                            }
-                        }
-                    }
-                }
-                Collections.sort(mods);
-                List<Sol> nsols=new ArrayList<>();
-                for (int mi=0; mi<Math.min(mods.size(),BEAMLIM); mi++) {
-                    Mod m=mods.get(mi);
-                    Sol sol=sols.get(m.i);
-                    nsols.add(m.l==null?sol:sol.add(m.l,m.g));
-                }
-                sols=nsols;
-            }
-            bminors=sols.get(0).minors;
-            bscr=scr(bminors);
-            if (bscr.compareTo(sols.get(0).scr)!=0) throw new RuntimeException();
-            System.out.println("time="+(System.currentTimeMillis()-st));
-        }
-    }
-
-    public static int compareTensors(int[] t0, int[] t1) {
-        for (int i=t0.length-1; i>0; i--) if (t0[i]!=t1[i]) return Integer.compare(t0[i],t1[i]);
-        return Integer.compare(t0[0],t1[0]);
-    }
-    private abstract static class GroupMerger {
-        //group a set of ints by G(e), where each int e represents a tensor T(e)
-        //0<=e<E; if G(e)=-1, we should discard that e; otherwise, G(e)>=0
-        //then within each group, if multiple e represent the same tensor T(e), only keep the one with lowest s(e),
-        //  for some given function s ("score")
-        //we are given that 0<=
-        abstract int group(int e);
-        abstract int[] tensor(int e);
-        abstract int score(int e);
-        int[][] ret(int E, int G) {
-            long st=System.currentTimeMillis(), mark=0;
-            int[] groupId=new int[E], groupFreq=new int[G]; Arrays.fill(groupId,-1);
-            System.out.println("calculating group numbers:");
-            for (int e=0; e<E; e++) {
-                if ((e%127)==0) {
-                    long time=System.currentTimeMillis()-st;
-                    if (time>=mark) {
-                        if (mark>0) System.out.println("cnt="+e+" t="+time+" m="+usedMem());
-                        mark+=10_000;
-                    }
-                }
-                int g=group(e);
-                if (g>-1) {
-                    groupId[e]=g;
-                    groupFreq[g]++;
-                }
-            }
-            System.out.println("t="+(System.currentTimeMillis()-st)+" m="+usedMem());
-
-            int[][] groups=new int[G][];
-            for (int g=0; g<G; g++) if (groupFreq[g]>0) groups[g]=new int[groupFreq[g]];
-            Arrays.fill(groupFreq,0);
-            for (int e=0; e<E; e++) {
-                if ((e%127)==0) {
-                    long time=System.currentTimeMillis()-st;
-                    if (time>=mark) {
-                        if (mark>0) System.out.println("cnt="+e+" t="+time+" m="+usedMem());
-                        mark+=10_000;
-                    }
-                }
-                int g=groupId[e];
-                if (g>-1) {
-                    if (groups[g]==null) throw new RuntimeException(g+"");
-                    groups[g][groupFreq[g]++]=e;
-                }
-            }
-            System.out.println("grouping time="+(System.currentTimeMillis()-st));
-
-            st=System.currentTimeMillis();
-            int[][] out=new int[G][];
-            for (int g=0; g<G; g++) if (groups[g]!=null) {
-                int[] elems=groups[g]; int sz=elems.length;
-                int[][] tensors=new int[sz][];;
-                for (int i=0; i<sz; i++) {
-                    int e=elems[i];
-                    tensors[i]=tensor(e);
-                }
-                Integer[] idxs=new Integer[sz]; for (int i=0; i<sz; i++) idxs[i]=i;
-                Arrays.sort(idxs,new Comparator<Integer>() {
-                    public int compare(Integer o1, Integer o2) {
-                        int d=compareTensors(tensors[o1],tensors[o2]);
-                        return d==0?Integer.compare(score(elems[o1]),score(elems[o2])):d;
-                    }
-                });
-                int[] merged=new int[sz]; int n=0;
-                for (int i=0; i<sz;) {
-                    merged[n++]=elems[idxs[i]];
-                    int j=i; while (j<sz && Arrays.equals(tensors[idxs[i]],tensors[idxs[j]])) j++;
-                    i=j;
-                }
-                out[g]=Arrays.copyOf(merged,n);
-            }
-            System.out.println("merging time="+(System.currentTimeMillis()-st));
-            return out;
-        }
-    }
-
-    public static void main(String[] args) {
-        long START=System.currentTimeMillis();
-        System.out.println("max heap size="+Runtime.getRuntime().maxMemory());
-        System.out.println("m="+memStats());
-
-        N=3;
-        N2=N*N; N4=N2*N2; N6=N4*N2;
-
-        int MAX_R=22, MAX_Z=12; String MODE="FLIP";
-        System.out.printf("N=%d MAX_R=%d MAX_Z=%d MODE=%s%n",N,MAX_R,MAX_Z,MODE);
-
-        BigInteger MEM_LIMIT=new BigInteger(""+1000_000_000);
-        System.out.printf("MEM_LIMIT=%d%n",MEM_LIMIT);
-
-        int[] TARGET=new int[N6];
-        for (int i=0; i<N; i++) for (int j=0; j<N; j++) for (int k=0; k<N; k++)
-            TARGET[(i*N+j)*N2+(j*N+k)]|=1<<(k*N+i);
-        MASK=(1<<N2)-1;
-
-        //generate the set of transformation functions that will be used to enforce symmetry
-        {
-            List<int[]> perms;
-            switch (MODE) {
-                case "CYCLIC":
-                    perms=new ArrayList<>(); {
-                        int[] p=new int[N]; for (int i=0; i<N; i++) p[i]=i;
-                        perms.add(p);
-                    }
-                    break;
-                case "FLIP":
-                    perms=new ArrayList<>();
-                    for (int t=0; t<2; t++) {
-                        int[] p=new int[N]; for (int i=0; i<N; i++) p[i]=t==0?i:(N-1-i);
-                        perms.add(p);
-                    }
-                    break;
-                case "SHIFT":
-                    perms=new ArrayList<>();
-                    for (int s=0; s<N; s++) {
-                        int[] p=new int[N]; for (int i=0; i<N; i++) p[i]=(i+s)%N;
-                        perms.add(p);
-                    }
-                    break;
-                case "S3":
-                    perms=new ArrayList<>(Collections.singletonList(new int[] {0}));
-                    for (int n=2; n<=N; n++) {
-                        List<int[]> tmp=new ArrayList<>();
-                        for (int[] p:perms)
-                            for (int i=0; i<n; i++) {
-                                int[] np=new int[n];
-                                System.arraycopy(p,0,np,0,i);
-                                np[i]=n-1;
-                                System.arraycopy(p,i,np,i+1,n-1-i);
-                                tmp.add(np);
-                            }
-                        perms=tmp;
-                    }
-                    break;
-                default:
-                    throw new RuntimeException("Symmetry type not found.");
-            }
-            NPERMS=perms.size();
-            permutedMats=new int[NPERMS][1<<N2];
-            for (int b=1; b<(1<<N2); b++)
-                for (int pi=0; pi<NPERMS; pi++) {
-                    int[] p=perms.get(pi);
-                    int nb=0;
-                    for (int r=0; r<N; r++) for (int c=0; c<N; c++) nb|=((b>> (p[r]*N+p[c]) )&1) << (r*N+c);
-                    permutedMats[pi][b]=nb;
-                }
-        }
-        MAJOR_GROUP_SIZE=3*NPERMS;
-        System.out.println("MAJOR_GROUP_SIZE="+MAJOR_GROUP_SIZE);
-
-        //create the index groups used for tensor compression
-        {
-            int[] compressionClassNum=new int[N6]; Arrays.fill(compressionClassNum,-1); G=0; {
-                int[] log2=new int[1<<N2]; for (int i=0; i<N2; i++) log2[1<<i]=i;
-                for (int i=0; i<N2; i++) for (int j=0; j<N2; j++) for (int k=0; k<N2; k++) if (compressionClassNum[i*N4+j*N2+k]==-1) {
-                    for (int tric:transformedTris(1<<i,1<<j,1<<k))
-                        compressionClassNum[log2[tric&MASK]*N4+log2[(tric>>N2)&MASK]*N2+log2[(tric>>(2*N2))&MASK]]=G;
-                    G++;
-                }
-            }
-            Gd32=(G-1)/32+1;
-            System.out.println("G="+G);
-            int[] compressionClassSizes=new int[G];
-            for (int i=0; i<N6; i++) compressionClassSizes[compressionClassNum[i]]++;
-            compressionClasses=new int[G][]; {
-                for (int g=0; g<G; g++) compressionClasses[g]=new int[compressionClassSizes[g]];
-                int[] tmp=new int[G];
-                for (int i=0; i<N6; i++) {
-                    int g=compressionClassNum[i];
-                    compressionClasses[g][tmp[g]++]=i;
-                }
-            }
-            System.out.println("# bits in compressed tensor="+G);
-        }
-
-        //enumerate the resulting tensor of all sparse groups generated from a single matrix triplet
-        int[][] groupTensor=new int[1<<(3*N2)][];
-        int[] groupSize=new int[1<<(3*N2)]; Arrays.fill(groupSize,-1);
-        int[][] triplets; {
-            System.out.println("generating groups");
-            int[] bitcnt=new int[1<<N2]; bitcnt[0]=0; for (int i=1; i<(1<<N2); i++) bitcnt[i]=bitcnt[i/2]+i%2;
-            int[] groupSzHist=new int[MAJOR_GROUP_SIZE+1];
-            boolean[] taken=new boolean[1<<(3*N2)];
-            long st=System.currentTimeMillis(), mark=0, work=0;
-            for (int a=1; a<(1<<N2); a++) for (int b=1; b<(1<<N2); b++) for (int c=1; c<(1<<N2); c++) {
-                int triplet=a|(b<<N2)|(c<<(2*N2));
-                if (!taken[triplet]) {
-                    long time=System.currentTimeMillis()-st;
-                    if (time>=mark) {
-                        mark+=10_000;
-                        System.out.printf("work=%d t=%d m=%s histogram of sizes=%s%n",
-                                work,time,memStats(),Arrays.toString(groupSzHist));
-                    }
-                    int[] triGroup=new int[MAJOR_GROUP_SIZE];
-                    int S=0;
-                    for (int ntri:transformedTris(a,b,c))
-                        if (!taken[ntri]) {
-                            taken[ntri]=true;
-                            triGroup[S++]=ntri;
-                        }
-                    triGroup=Arrays.copyOf(triGroup,S);
-                    boolean major=S==MAJOR_GROUP_SIZE;
-                    if (bitcnt[a]*bitcnt[b]*bitcnt[c]<=MAX_Z) {
-                        groupSzHist[S]++;
-                        groupSize[triplet]=S;
-                        int[] eval=symmCompress(xortensor(triGroup));
-                        groupTensor[triplet]=eval;
-                    }
-                    work++;
-                }
-            }
-            System.out.printf("work=%d t=%d m=%s histogram of sizes=%s end%n",
-                    work,System.currentTimeMillis()-st,memStats(),Arrays.toString(groupSzHist));
-            triplets=new GroupMerger() {
-                int group(int e) { return groupSize[e]; }
-                int[] tensor(int e) { return groupTensor[e]; };
-                int score(int e) { return e; }
-            }.ret(1<<(3*N2),MAJOR_GROUP_SIZE+1);
-            for (int r=1; r<=MAJOR_GROUP_SIZE; r++) if (triplets[r]==null) triplets[r]=new int[] {};
-        }
-        System.out.println("m="+memStats());
-
-
-        int[] triCnts=new int[MAJOR_GROUP_SIZE+1];
-        for (int r=1; r<=MAJOR_GROUP_SIZE; r++) triCnts[r]=triplets[r].length;
-        System.out.println(Arrays.toString(triCnts));
-
-        class Profiles {
-            List<int[]> out;
-            int[] limits;
-            int[] freq;
-            int maxTot;
-            void dfs(int rankLeft, int m) {
-                if (m==0) {
-                    out.add(Arrays.copyOf(freq,freq.length));
-                    return;
-                }
-                for (int cnt=0; rankLeft-cnt*m>=0 && cnt<=limits[m]; cnt++) {
-                    freq[m]=cnt;
-                    dfs(rankLeft-cnt*m,m-1);
-                }
-            }
-            List<int[]> generate(int maxTot, int[] limits) {
-                this.maxTot=maxTot; this.limits=limits;
-                out=new ArrayList<>();
-                freq=new int[limits.length];
-                dfs(maxTot,limits.length-1);
-                return out;
-            }
-        }
-        List<int[]> profiles=new Profiles().generate(MAX_R,triCnts);
-        int nP=profiles.size();
-        System.out.println("# profiles="+nP);
-
-        class ProfileCost {
-            private static BigInteger nCr(int n, int k) {
-                if (n<k) return BigInteger.ZERO;
-                BigInteger out=BigInteger.ONE;
-                for (int i=n; i>n-k; i--) out=out.multiply(new BigInteger(i+""));
-                for (int i=1; i<=k; i++) out=out.divide(new BigInteger(i+""));
-                return out;
-            }
-            BigInteger cost(int[] p) {
-                BigInteger n=BigInteger.ONE;
-                for (int r=1; r<=MAJOR_GROUP_SIZE; r++) n=n.multiply(nCr(triCnts[r],p[r]));
-                return n;
-            }
-            BigInteger cost(List<int[]> P) {
-                BigInteger out=BigInteger.ZERO;
-                for (int[] p:P) out=out.add(cost(p));
-                return out;
-            }
-        } ProfileCost PROFILECOST=new ProfileCost();
-
-        System.out.println("size of entire search space="+PROFILECOST.cost(profiles));
-
-        List<List<int[]>> P0s=new ArrayList<>(), P1s=new ArrayList<>(); {
-            int[][] table=new int[nP][nP]; {
-                Map<String,Integer> profile2id=new HashMap<>();
-                for (int pi=0; pi<nP; pi++) profile2id.put(Arrays.toString(profiles.get(pi)),pi);
-                for (int pi=0; pi<nP; pi++) for (int pj=0; pj<nP; pj++)
-                    table[pi][pj]=profile2id.getOrDefault(Arrays.toString(listSum(profiles.get(pi),profiles.get(pj))),-1);
-            }
-            BigInteger[] costs=new BigInteger[nP];
-            for (int pi=0; pi<nP; pi++) costs[pi]=PROFILECOST.cost(profiles.get(pi));
-
-            System.out.println("beam search");
-            boolean[][][] bsol=null;
-            BigInteger pscr=null;
-            for (int S=1; S<=N; S++) {
-                BeamSearch $=new BeamSearch(table,costs,S,MEM_LIMIT);
-                System.out.println(S+" "+$.bscr);
-                if (pscr!=null && pscr.compareTo($.bscr)<=0) break;
-                else {
-                    pscr=$.bscr;
-                    bsol=$.bminors;
-                }
-            }
-
-            System.out.println("totCost="+pscr);
-            for (boolean[][] m:bsol) {
-                List<int[]> P0=new ArrayList<>(), P1=new ArrayList<>();
-                for (int p=0; p<nP; p++) if (m[0][p]) P0.add(profiles.get(p));
-                for (int p=0; p<nP; p++) if (m[1][p]) P1.add(profiles.get(p));
-                System.out.print("map "); for (int[] p:P0) System.out.print(" "+Arrays.toString(p)); System.out.println();
-                System.out.print("iter"); for (int[] p:P1) System.out.print(" "+Arrays.toString(p)); System.out.println();
-                P0s.add(P0); P1s.add(P1);
-                System.out.println(PROFILECOST.cost(P0)+" "+PROFILECOST.cost(P1));
-            }
-            //check validity
-            Set<String> prod=new HashSet<>();
-            for (int s=0; s<P0s.size(); s++)
-                for (int[] p0:P0s.get(s)) for (int[] p1:P1s.get(s))
-                    prod.add(Arrays.toString(listSum(p0,p1)));
-            for (int[] p:profiles) if (!prod.contains(Arrays.toString(p))) throw new RuntimeException("Product does not contain "+Arrays.toString(p));
-        }
-
-        abstract class ForEachSetOfProfile {
-            int[] profile, idxs, tris;
-            abstract void process(int[] tris, int[] tensor);
-            private void iter(int r, int imin, int combolen, int trii, int[] tensor) {
-                if (r==profile.length) process(tris,tensor);
-                else if (combolen==profile[r]) iter(r+1,0,0,trii,tensor);
-                else {
-                    for (int i=imin; i<triCnts[r]; i++) {
-                        int tri=triplets[r][i];
-                        idxs[trii]=i;
-                        tris[trii]=tri;
-                        int[] ntensor=xor(tensor,groupTensor[tri]);
-                        iter(r,i+1,combolen+1,trii+1,ntensor);
-                    }
-                }
-            }
-            public ForEachSetOfProfile(int[] P) {
-                profile=P;
-                int tot=0; for (int r=1; r<P.length; r++) tot+=P[r];
-                idxs=new int[tot]; tris=new int[tot];
-                iter(1,0,0,0,new int[Gd32]);
-            }
-        }
-        class TrisInfo {
-            int totrank(int[] tris) {
-                int out=0;
-                for (int tri:tris) out+=groupSize[tri];
-                return out;
-            }
-            int[] tris2tensor(int[] tris) {
-                int[] tensor=new int[Gd32];
-                for (int tri:tris) tensor=xor(tensor,groupTensor[tri]);
-                return tensor;
-            }
-        } TrisInfo $=new TrisInfo();
-
-        class D0Set {
-            //converts set of matrix triplets to int
-            List<int[]> P0;
-            int[] amts;
-            int[] tris(int e) {
-                int pi=0;
-                for (; pi<P0.size(); pi++) {
-                    if (e>=amts[pi]) e-=amts[pi];
-                    else break;
-                }
-                int[] p=P0.get(pi);
-                List<Integer> out=new ArrayList<>();
-                for (int r=MAJOR_GROUP_SIZE; r>=1; r--) {
-                    int ncr=(int)ncombos(triCnts[r],p[r]);
-                    for (int trii:idx2combo(triCnts[r],p[r],e%ncr))
-                        out.add(triplets[r][trii]);
-                    e/=ncr;
-                }
-                return toArr(out);
-            }
-            //stores a range of integers [0,R), where each integer e has an implicit associated array key(e)
-            //when querying for a specific key: if key does not exist, return -1
-            long searches, binSearches, binWork;
-            long[] filterPassed;
-            private long[][] filters;
-            //works even though int is signed, because >>> will rotate the signed bit
-            private void add(long[] filter, int v) {
-                filter[v>>>6]|=1L<<(v&63);
-            }
-            private long bit(long[] filter, int v) {
-                return filter[v>>>6]&(1L<<(v&63));
-            }
-            private int H=10000019;
-            private int[][] chains;
-            private int hash(int[] key) {
-                int out=0;
-                for (int v:key) out^=v;
-                return ((out%H)+H)%H;
-            }
-            public D0Set(List<int[]> P0) {
-                this.P0=P0;
-                amts=new int[P0.size()];
-                for (int pi=0; pi<P0.size(); pi++)
-                    amts[pi]=PROFILECOST.cost(P0.get(pi)).intValue();
-
-                int totCombos=0;
-                for (int[] p:P0) totCombos+=PROFILECOST.cost(p).intValue();
-                long st=System.currentTimeMillis();
-                chains=new GroupMerger() {
-                    int group(int e) { return hash(tensor(e)); }
-                    int[] tensor(int e) { return $.tris2tensor(tris(e)); }
-                    int score(int e) { return $.totrank(tris(e)); }
-                }.ret(totCombos,H);
-
-                st=System.currentTimeMillis();
-                filters=new long[Gd32][1<<26];
-                filterPassed=new long[Gd32];
-                for (int[] ch:chains) if (ch!=null) for (int e:ch) {
-                    int[] K=$.tris2tensor(tris(e));
-                    for (int f=0; f<Gd32; f++) add(filters[f],K[f]);
-                }
-                System.out.println("bitset filter time="+(System.currentTimeMillis()-st)+" m="+memStats());
-
-                int max=0, cnt=0, tot=0;
-                for (int[] chain:chains) if (chain!=null) { max=Math.max(max,chain.length); cnt++; tot+=chain.length; }
-                System.out.println("max chain length="+max+", # chains="+cnt);
-                System.out.println("cnt remaining="+tot);
-            }
-            private int binsearch(int[] elems, int[] K) {
-                if (elems==null) return -1;
-                binSearches++;
-                int lo=0, hi=elems.length-1;
-                while (lo<hi) {
-                    binWork++;
-                    int mi=(lo+hi)/2;
-                    if (compareTensors(K,$.tris2tensor(tris(elems[mi])))<=0) hi=mi;
-                    else lo=mi+1;
-                }
-                return Arrays.equals(K,$.tris2tensor(tris(elems[lo])))?elems[lo]:-1;
-            }
-            public int getXorOf(int[] Ka, int[] Kb) {
-                searches++;
-                for (int f=0; f<Gd32; f++) {
-                    if (bit(filters[f],Ka[f]^Kb[f])==0) return -1;
-                    filterPassed[f]++;
-                }
-                int[] K=xor(Ka,Kb);
-                return binsearch(chains[hash(K)],K);
-            }
-        }
-
-        System.out.println("searching m="+memStats());
-        int[] CTARGET=symmCompress(TARGET);
-        BigInteger tot; {
-            BigInteger tmp=BigInteger.ZERO; for (List<int[]> P1:P1s) tmp=tmp.add(PROFILECOST.cost(P1));
-            tot=tmp;
-        }
-        String statsString="%3f%% %3f%% searches=%d filterPassed=%s binSearches=%d binWork=%d t=%d total_t=%d m=%s%n";
-        long search_st=System.currentTimeMillis();
-        final long[] searches0={0};
-        final int[] brank={Integer.MAX_VALUE};
-        class Tester {
-            String str(int[]... triss) {
-                StringBuilder s=new StringBuilder();
-                for (int[] combo:triss) {
-                    for (int tri:combo) {
-                        for (int m:new int[] {tri&MASK,(tri>>N2)&MASK,(tri>>(2*N2))&MASK}) {
-                            int[] A=new int[N2]; for (int i=0; i<N2; i++) A[i]=(m>>i)&1;
-                            s.append(Arrays.toString(A)).append(",");
-                        }
-                        s.append("  ");
-                    }
-                    s.append("\n");
-                }
-                return s.toString();
-            }
-            void testSolution(int[]... triss) {
-                int[] tensor=new int[Gd32];
-                for (int[] tris:triss) for (int tri:tris) tensor=xor(tensor,groupTensor[tri]);
-                if (!Arrays.equals(CTARGET,tensor)) throw new RuntimeException("Invalid decomposition of MM tensor:\n"+str(triss));
-                int rank=0;
-                for (int[] tris:triss) rank+=$.totrank(tris);
-                if (rank<brank[0]) {
-                    brank[0]=rank;
-                    System.out.println("rank="+rank+" generated from\n"+str(triss));
-                }
-            }
-        } Tester TESTER=new Tester();
-
-        for (int s=0; s<P0s.size(); s++) {
-            System.out.println("group # "+s);
-            List<int[]> P0=P0s.get(s), P1=P1s.get(s);
-            D0Set D0=new D0Set(P0); {
-                System.out.println("checking decomp<-->int conversion");
-                long st=System.currentTimeMillis(); final long[] mark={0};
-                int[] idx={0};
-                for (int[] p:P0) new ForEachSetOfProfile(p) { void process(int[] tris, int[] tensor) {
-                    long time=System.currentTimeMillis()-st;
-                    if (time>=mark[0]) {
-                        mark[0]+=10_000;
-                        System.out.printf("cnt=%d t=%d%n",idx[0],time);
-                    }
-                    int[] generated=D0.tris(idx[0]); Arrays.sort(generated);
-                    int[] tmpTris=Arrays.copyOf(tris,tris.length); Arrays.sort(tmpTris);
-                    if (!Arrays.equals(tmpTris,generated)) throw new RuntimeException("tris="+Arrays.toString(tris)+" generated="+Arrays.toString(generated));
-                    idx[0]++;
-                }};
-                System.out.printf("cnt=%d t=%d m=%s%n",idx[0],System.currentTimeMillis()-st,memStats());
-            }
-            for (int pi=0; pi<P1.size(); pi++) {
-                int[] p1=P1.get(pi);
-                D0.searches=0; Arrays.fill(D0.filterPassed,0); D0.binSearches=0; D0.binWork=0;
-                BigInteger p1tot=PROFILECOST.cost(p1);
-                System.out.printf("%d/%d %s expected # searches=%d%n",pi,P1.size(),Arrays.toString(p1),p1tot);
-                int firstRank; {
-                    int tmp=-1;
-                    for (int r=0; r<=MAJOR_GROUP_SIZE; r++) if (p1[r]>0) { tmp=r; break; }
-                    firstRank=tmp;
-                }
-                long st=System.currentTimeMillis(); final long[] mark={0};
-                if (firstRank==-1) {
-                    int e=D0.getXorOf(CTARGET,new int[Gd32]);
-                    if (e>=0) TESTER.testSolution(D0.tris(e));
+            int[] ord=ArrayHelp.range(NP);
+            MITM sol=greedy(ord);
+            System.out.println("~~~ init_stat="+sol.stat());
+            SplittableRandom rnd=new SplittableRandom(1);
+            for (long reps=0, accn=0, mark=0; reps<REPS;) {
+                int i=rnd.nextInt(NP), j=rnd.nextInt(NP-1);
+                if (j>=i) j++;
+                int oi=ord[i], oj=ord[j];
+                ord[i]=oj; ord[j]=oi;
+                MITM nsol=greedy(ord);
+                if (nsol!=null && nsol.totcost.compareTo(sol.totcost)<=0) {
+                    sol=nsol;
+                    accn++;
                 }
                 else {
-                    int[] subp1=Arrays.copyOf(p1,MAJOR_GROUP_SIZE+1);
-                    subp1[firstRank]--;
-                    long[] iters={0};
-                    new ForEachSetOfProfile(subp1) {
-                        void process(int[] stris1, int[] stensor1) {
-                            if ((iters[0]&127)==0) {
-                                long time=System.currentTimeMillis()-st;
-                                if (time>=mark[0]) {
-                                    if (mark[0]>0) System.out.printf(statsString,(D0.searches+searches0[0])/tot.doubleValue()*100,D0.searches/p1tot.doubleValue()*100,
-                                            D0.searches,Arrays.toString(D0.filterPassed),D0.binSearches,D0.binWork,time,System.currentTimeMillis()-search_st,memStats());
-                                    mark[0]+=(mark[0]<100_000?10_000:100_000);
-                                }
-                            }
-                            iters[0]++;
-                            if (!Arrays.equals($.tris2tensor(stris1),stensor1)) throw new RuntimeException();
-                            int[] tmptensor=xor(CTARGET,stensor1);
-                            int maxIdx=(idxs.length==0 || subp1[firstRank]==0?triplets[firstRank].length:idxs[0]);
-                            for (int idx=0; idx<maxIdx; idx++) {
-                                int firstTri=triplets[firstRank][idx];
-                                int e=D0.getXorOf(tmptensor,groupTensor[firstTri]);
-                                if (e>=0) {
-                                    int[] tris1=Arrays.copyOf(stris1,stris1.length+1);
-                                    tris1[stris1.length]=firstTri;
-                                    TESTER.testSolution(D0.tris(e),tris1);
-                                }
-                            }
-                        }
-                    };
+                    ord[i]=oi; ord[j]=oj;
                 }
-                System.out.printf(statsString,(D0.searches+searches0[0])/tot.doubleValue()*100,D0.searches/p1tot.doubleValue()*100,
-                        D0.searches,Arrays.toString(D0.filterPassed),D0.binSearches,D0.binWork,System.currentTimeMillis()-st,System.currentTimeMillis()-search_st,memStats());
-                searches0[0]+=D0.searches;
+                reps++;
+                long t=System.currentTimeMillis()-st;
+                if (reps==REPS || t>=mark) {
+                    System.out.printf("\tt=%d reps=%d scr=%d accn=%d%n",t,reps,sol.totcost,accn);
+                    mark+=5000;
+                }
+            }
+            System.out.println("~~~ fin_stat="+sol.stat());
+            //System.out.println(ArrayHelp.inta2str(ord));
+            return sol;
+        }
+        public void checkMITM(MITM mitm) {
+            boolean[] seen=new boolean[NP];
+            for (int[] pa:mitm.memPs) for (int[] pb:mitm.iterPs) {
+                int pi=profile2idx(eltsum(pa,pb));
+                if (pi>=0) seen[pi]=true;
+            }
+            for (boolean b:seen) if (!b) throw new RuntimeException();
+        }
+    }
+}
+abstract class CardDFS {
+    private OrbitCollection O$;
+    protected int D; private int[] groupIdxs;
+    private int[] ois;
+    private long work;
+    abstract void process(int[] stem, int oi);
+    abstract void process_stem(int[] stem);
+    public int[] stem_card() { if (D==0) return new int[] {}; return Arrays.copyOf(ois,D-1); }
+    public int[] card() { return Arrays.copyOf(ois,D); }
+    private void dfs(int d, int lo, int[] vec) {
+        if (d==D-1) process_stem(vec);
+        int g=groupIdxs[d]; int[] oiList=O$.CANONICAL_ORBITS_BY_SIZE[g];
+        for (int i=lo; i<oiList.length; i++) {
+            int oi=oiList[i]; ois[d]=oi;
+            if (d==D-1) {
+                process(vec,oi); work++;
+            }
+            else dfs(d+1, d<D-1&&groupIdxs[d]==groupIdxs[d+1]?(i+1):0, O$.xorvec(vec,oi));
+        }
+    }
+    public CardDFS(OrbitCollection O$, int[] profile, int[] init_vec) {
+        if (O$.CANONICAL_ORBITS_BY_SIZE.length!=profile.length) throw new RuntimeException();
+        this.O$=O$;
+        D=0; for (int m:profile) if (m>=0) D+=m; else throw new RuntimeException();
+        ois=new int[D];
+        if (D==0) process(init_vec,OrbitCollection.NOT_ORBITIDX);
+        else {
+            groupIdxs=new int[D];
+            for (int i=0, idx=0; i<O$.CANONICAL_ORBITS_BY_SIZE.length; i++)
+                for (int rep=0; rep<profile[i]; rep++) groupIdxs[idx++]=i;
+            work=0;
+            dfs(0,0,init_vec);
+            long expected_work=ProfileManagement.profileCost(O$.CANONICAL_ORANKHIST,profile).longValue();
+            if (work!=expected_work) throw new RuntimeException(work+"!="+expected_work);
+        }
+    }
+    public CardDFS(OrbitCollection O$, int[] mults) {
+        this(O$,mults,new int[O$.WORDLEN]);
+    }
+}
+
+abstract class CardParser {
+    public static final long NOT_A_PAIR=-1, EMPTY_PAIR=-2;
+    public final int W;
+    CardParser(int W) { this.W=W; }
+    public abstract int _word(long p, int w);
+    public int word(long p, int w) {
+        if (p==NOT_A_PAIR) throw new RuntimeException("Not a pair");
+        if (p==EMPTY_PAIR) return 0;
+        if (w<0 || w>=W) throw new RuntimeException(w+" not in [0,"+W+")");
+        return _word(p,w);
+    }
+    public int compareBitset(long a, int[] vec) {
+        for (int w=W-1; w>=0; w--) {
+            int d=Integer.compareUnsigned(word(a,w),vec[w]);
+            if (d!=0) return d;
+        }
+        return 0;
+    }
+    public int[] vec(long a) {
+        int[] v=new int[W];
+        for (int w=0; w<W; w++) v[w]=word(a,w);
+        return v;
+    }
+    public abstract int[] _card(long p);
+    public int[] card(long p) { if (p==NOT_A_PAIR) throw new RuntimeException(); if (p==EMPTY_PAIR) return new int[] {}; return _card(p); }
+    public abstract int _rank(long p);
+    public int rank(long p) { if (p==NOT_A_PAIR) throw new RuntimeException(); if (p==EMPTY_PAIR) return 0; return _rank(p); }
+}
+class Bitset {
+    private static final int CHUNK_POW=6, CHUNK=1<<CHUNK_POW, CHUNKMODMASK=(1<<CHUNK_POW)-1;
+    long[] A;
+    public Bitset(long N) {
+        if (N/CHUNK+1>=Integer.MAX_VALUE) throw new RuntimeException();
+        A=new long[(int)(N/CHUNK+1)];
+    }
+    public void add(int v) {
+        A[v>>>CHUNK_POW]|=1L<<(v&CHUNKMODMASK);
+    }
+    public boolean contains(int v) { return (A[v>>>CHUNK_POW]&(1L<<(v&CHUNKMODMASK)))!=0; }
+}
+class Filterer {
+    public final int F, W;
+    Bitset[] filters;
+    public Filterer(int F) {
+        this.F=F;
+        W=(F-1)/32+1;
+        filters=new Bitset[W];
+        for (int f=0; f<F; f+=32) filters[f/32]=new Bitset(1L<<(Math.min(f+32,F)-f));
+    }
+    public void add(int[] vec) {
+        for (int w=0; w<W; w++) filters[w].add(vec[w]);
+    }
+    public int first_fail(int[] vec) {
+        for (int w=0; w<W; w++) if (!filters[w].contains(vec[w])) return w;
+        return W;
+    }
+}
+class Deck {
+    private static void swap(long[] A, int i, int j) {
+        long t=A[i]; A[i]=A[j]; A[j]=t;
+    }
+    //sort vals in ps based on their bit-vectors f.vec(p)
+    //bit-vectors are ordered by ascending [W-1] index, unsigned int64 comparison,
+    //  tie-break at [W-2] index, then at [W-3] index, ...
+    //if equal bit-vectors: keep p with minimal f.rank(p), tiebreak on smallest integer p
+    public static void sort_help(long[] A, CardParser f, int left, int right, int w, SplittableRandom rnd) {
+        if (left>=right) return;
+        if (w<0) { //only care about getting the min elem in this range
+            long bp=CardParser.NOT_A_PAIR; int brank=Integer.MAX_VALUE;
+            for (int i=left; i<=right; i++) {
+                long p=A[i]; int r=f.rank(p);
+                if (bp==CardParser.NOT_A_PAIR || r<brank || (r==brank && p<bp)) {
+                    bp=p;
+                    brank=r;
+                }
+            }
+            A[left]=bp;
+            for (int i=left+1; i<=right; i++) A[i]=CardParser.NOT_A_PAIR;
+            return;
+        }
+        int pw=f.word(A[rnd.nextInt(left,right+1)],w);
+        int low_end=left, pivot_end=left; //[left,low_end) are <pw, [low_end,pivot_end) are ==pw, rest are yet to be partitioned
+        for (int i=left; i<=right; i++) {
+            int d=Long.compareUnsigned(f.word(A[i],w),pw);
+            if (d<0) {
+                swap(A,low_end,i);
+                if (pivot_end>low_end) swap(A,pivot_end,i);
+                low_end++; pivot_end++;
+            }
+            else if (d==0) {
+                swap(A,pivot_end,i); pivot_end++;
             }
         }
-        System.out.println("TOTAL TIME="+(System.currentTimeMillis()-START));
+        if (low_end>=pivot_end) throw new RuntimeException();
+        sort_help(A,f,left,low_end-1,w,rnd);
+        sort_help(A,f,low_end,pivot_end-1,w-1,rnd); //the range [low_end,pivot_end) must have size at least 1
+        sort_help(A,f,pivot_end,right,w,rnd);
+    }
+    public static long[] sortAndFilter(long[] A, CardParser f) { //NOTE: Will modify A
+        sort_help(A,f,0,A.length-1,f.W-1,new SplittableRandom(1));
+        int K=0;
+        for (int i=0; i<A.length; i++)
+            if (A[i]!=CardParser.NOT_A_PAIR) A[K++]=A[i];
+        return Arrays.copyOf(A,K);
+    }
+
+    CardParser code_parser;
+    long[] ps;
+    Filterer filt=null; long[] nfailedat=null; long ntough;
+    public Deck(int F, long[] pairs, CardParser code_parser, boolean have_filt) { //WARNING: mutates long[] pairs
+        for (long p:pairs) if (p==CardParser.NOT_A_PAIR) throw new RuntimeException();
+        this.code_parser=code_parser;
+        ps=sortAndFilter(pairs,code_parser);
+        if (have_filt) init_filter(F);
+    }
+    public void check(OrbitCollection O$) {
+        long st=System.currentTimeMillis();
+        for (long p:ps) { //ensure all cards, xor-vectors, and ranks are correct
+            int[] card=code_parser.card(p);
+            if (!Arrays.equals(O$.vec(card),code_parser.vec(p))) throw new RuntimeException();
+            if (O$.rank(card)!=code_parser.rank(p)) throw new RuntimeException();
+        }
+        for (int i=1; i<ps.length; i++) //ensure all bit vector keys in our map data structure are distinct and in ascending order
+            if (code_parser.compareBitset(ps[i-1],code_parser.vec(ps[i]))>=0) throw new RuntimeException();
+        System.out.println("check_time="+(System.currentTimeMillis()-st));
+    }
+    private void init_filter(int F) {
+        long filter_st=System.currentTimeMillis();
+        filt=new Filterer(F);
+        for (long p:ps) filt.add(code_parser.vec(p));
+        for (long p:ps) if (filt.first_fail(code_parser.vec(p))!=filt.W) throw new RuntimeException();
+        nfailedat=new long[filt.W]; ntough=0;
+        System.out.println("filter_time="+(System.currentTimeMillis()-filter_st));
+    }
+    private long bin_search(int[] vec) {
+        int lo=0, hi=ps.length-1;
+        while (lo<hi) {
+            int mi=(lo+hi)>>>1; //behaves correctly even when lo+hi overflows
+            if (code_parser.compareBitset(ps[mi],vec)>=0) hi=mi;
+            else lo=mi+1;
+        }
+        long p=ps[lo];
+        return code_parser.compareBitset(p,vec)==0?p:CardParser.NOT_A_PAIR;
+    }
+    public long get(int[] stem, OrbitCollection O$, int oi) { //search for bit vector O$.xorvec(stem,oi)
+        if (filt!=null) {
+            for (int w=0; w<O$.WORDLEN; w++) {
+                if (!filt.filters[w].contains(O$.xorword(stem,oi,w))) {
+                    nfailedat[w]++;
+                    return CardParser.NOT_A_PAIR;
+                }
+            }
+            ntough++;
+        }
+        return bin_search(O$.xorvec(stem,oi));
     }
 }
