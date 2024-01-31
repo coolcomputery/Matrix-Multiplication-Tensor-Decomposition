@@ -2,20 +2,25 @@
 
 All tensor decompositions here are mod 2.
 
-### Part 1
-* [(link)](https://murj-assets.s3.amazonaws.com/assets/issues/Vol_43_Published.pdf#page=33)
+## [Part 1](https://murj-assets.s3.amazonaws.com/assets/issues/Vol_43_Published.pdf#page=33)
 * [Source code (a single Java file)](https://github.com/coolcomputery/Matrix-Multiplication-Tensor-Decomposition/blob/79500ae287090ac08c502425727eb56ccbad86fe/SymmetricMod2.java)
-* Considers cyclic + (permutation-matrix de Groote) symmetries of the matrix multiplication tensor
+* Meet-in-the-middle search
+* Considers cyclic + permutation-sandwich symmetry of the matrix multiplication tensor
 
-## Part 2
-* [(link)](https://murj-assets.s3.amazonaws.com/assets/issues/Vol_45_Published.pdf#page=33) (has the same title in this print)
+## [Part 2](https://murj-assets.s3.amazonaws.com/assets/issues/Vol_45_Published.pdf#page=33)
+* (has the same title in this print)
 * [***Full report with omitted tables showing search results***](https://github.com/coolcomputery/Matrix-Multiplication-Tensor-Decomposition/blob/4508649a56a2861fd3a262c1159feba959d48d60/full-part2-report.pdf)
 * [Source code](https://github.com/coolcomputery/Matrix-Multiplication-Tensor-Decomposition/tree/5b15fedf474cb35f6b43b360b05aadc0520fb4af)
   * `SymmetricMod2.java` searches for decompositions satisfying a given symmetry group
   * `MatrixTripletTransformations.java` enumerates symmetry groups that superset a given subset
-* Considers cyclic + transpose + (all de Groote) symmetries
+* Considers many more symmetry subgroups of the De Groote symmetries
 
-#### Notation of symmetry subgroups
+## Part 3
+* (full paper coming soon)
+* [Source code](https://github.com/coolcomputery/Matrix-Multiplication-Tensor-Decomposition/blob/9dd2d38559252023390add09c8520dd8fefbc8ee/SAT%20%2B%20symmetry%20restrictions.ipynb)
+* Uses a SAT solver
+
+## Part 2 only: Notation of symmetry subgroups and input format
 A subgroup is represented as a comma-delineated list of generators (no spaces)
 * the cyclic shift function $\bigtriangleup$ is denoted as `cyc`
 * the transpose function $\intercal$ is denoted as `tp`
