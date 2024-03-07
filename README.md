@@ -1,6 +1,9 @@
-# On Symmetric Rank Decompositions of the 3x3 Matrix Multiplication Tensor
+# Ruling Out Low-rank Matrix Multiplication Tensor Decompositions with Symmetries via SAT
 
 All tensor decompositions here are mod 2.
+
+$n\times n$ matrix multiplication tensor:
+$$\mathcal{T}^{\langle n\rangle}_{a,b,c,d,e,f} \ := \ (b=c) \land (d=e) \land (f=a) ,\ \forall\ 0\le a,b,c,d,e,f\lt n$$
 
 De Groote symmetries:
 * cycle: $\bigtriangleup((A,B,C)):=(B,C,A)$
@@ -8,14 +11,15 @@ De Groote symmetries:
 * sandwich: $\phi_{X,Y,Z}((A,B,C)):=(XAY^{-1},YBZ^{-1},ZCX^{-1})$
   * $\phi_X$ is short for $\phi_{X,X,X}$
 
-Full symmetry group for the $n\times n$ matrix multiplication tensor: $\Gamma_n := \left\langle \bigtriangleup,\intercal,\phi_{X,Y,Z} \right\rangle_{X,Y,Z\in\mathrm{GL}(n,\mathbb{F})}$
+Full symmetry group: $\Gamma_n := \left\langle \bigtriangleup,\intercal,\phi_{X,Y,Z} \right\rangle_{X,Y,Z\in\mathrm{GL}(n,\mathbb{Z}/2\mathbb{Z})}$
 
-## [Part 3](https://arxiv.org/abs/2402.01011)
+## [Paper](https://arxiv.org/abs/2402.01011) (Version 3)
 * [Source code (a single Jupyter notebook)](https://github.com/coolcomputery/Matrix-Multiplication-Tensor-Decomposition/blob/9dd2d38559252023390add09c8520dd8fefbc8ee/SAT%20%2B%20symmetry%20restrictions.ipynb)
 * Uses the Z3 SAT solver
-* Proves that there are no rank $\le 21$ decompositions of the 3x3 mat-mul tensor that are symmetric under $\left\langle \bigtriangleup, \intercal \right\rangle$ or $\left\langle \bigtriangleup, \phi_F \right\rangle$, whre $F=[[1,1,0],[0,1,0],[0,0,1]]$
+* Proves that there are no rank $\le 21$ decompositions of the 3x3 mat-mul tensor that are symmetric under $\left\langle \bigtriangleup, \intercal \right\rangle$ or $\left\langle \bigtriangleup, \phi_F \right\rangle$, where $F=[[1,1,0],[0,1,0],[0,0,1]]$
 
-## [Part 2](https://murj-assets.s3.amazonaws.com/assets/issues/Vol_45_Published.pdf#page=33)
+# Older versions
+## [Version 2](https://murj-assets.s3.amazonaws.com/assets/issues/Vol_45_Published.pdf#page=33)
 * (has the same title in this print)
 * [***Full report with omitted tables showing search results***](https://github.com/coolcomputery/Matrix-Multiplication-Tensor-Decomposition/blob/4508649a56a2861fd3a262c1159feba959d48d60/full-part2-report.pdf)
 * [Source code](https://github.com/coolcomputery/Matrix-Multiplication-Tensor-Decomposition/tree/5b15fedf474cb35f6b43b360b05aadc0520fb4af)
@@ -23,7 +27,7 @@ Full symmetry group for the $n\times n$ matrix multiplication tensor: $\Gamma_n 
   * `MatrixTripletTransformations.java` enumerates symmetry groups that superset a given subset
 * Considers all subgroups up to conjugacy of the form $\left\langle f \right\rangle$, $\left\langle \bigtriangleup, f \right\rangle$, $\left\langle \bigtriangleup, \intercal, f \right\rangle$ for an arbitrary element $f\in\Gamma_3$
 
-### Part 2 only: Notation of symmetry subgroups and input format
+### Notation of symmetry subgroups and input format
 A subgroup is represented as a comma-delineated list of generators (no spaces)
 * the cyclic shift function $\bigtriangleup$ is denoted as `cyc`
 * the transpose function $\intercal$ is denoted as `tp`
@@ -45,7 +49,7 @@ Ex. the subgroup below is denoted as `cyc,tr110010001-100010001-100010001@cyc@tp
 #### `MatrixTripletTransformations`
   * `generatingSetsAdd1_mod_conj(gset)`, where `gset` notates a set of generators $S$, returns all subgroups of the form $\langle S \cup \{f\}\rangle$ for all $f$ in the universe group $\Gamma$, **up to conjugacy**.
 
-## [Part 1](https://murj-assets.s3.amazonaws.com/assets/issues/Vol_43_Published.pdf#page=33)
+## [Version 1](https://murj-assets.s3.amazonaws.com/assets/issues/Vol_43_Published.pdf#page=33)
 * [Source code (a single Java file)](https://github.com/coolcomputery/Matrix-Multiplication-Tensor-Decomposition/blob/79500ae287090ac08c502425727eb56ccbad86fe/SymmetricMod2.java)
 * Meet-in-the-middle search
 * Considers symmetry groups $\left\langle \bigtriangleup \right\rangle$, $\left\langle \bigtriangleup, \phi_X \right\rangle$, $\left\langle \bigtriangleup, \phi_Y \right\rangle$, $\left\langle \bigtriangleup, \phi_X, \phi_Y \right\rangle$; where $X=[[0,0,1],[1,0,0],[0,1,0]]$ and $Y=[[0,0,1],[0,1,0],[1,0,0]]$
